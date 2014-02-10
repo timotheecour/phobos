@@ -1896,6 +1896,13 @@ unittest
         assert(c.realValue.isNaN); // NaN
         c.doSomething();
     }
+
+    // Bugzilla 12058
+    interface Foo
+    {
+        inout(Object) foo() inout;
+    }
+    BlackHole!Foo o;
 }
 
 
@@ -1923,10 +1930,6 @@ void main()
 }
 --------------------
 
-BUGS:
-  Nothrow functions cause program to abort in release mode because the trap is
-  implemented with $(D assert(0)) for nothrow functions.
-
 See_Also:
   AutoImplement, generateAssertTrap
  */
@@ -1947,8 +1950,8 @@ class NotImplementedError : Error
 
 unittest
 {
+    import std.exception : assertThrown;
     // nothrow
-    debug // see the BUGS above
     {
         interface I_1
         {
@@ -1956,11 +1959,8 @@ unittest
             void bar() nothrow;
         }
         auto o = new WhiteHole!I_1;
-        uint trap;
-        try { o.foo(); } catch (Error e) { ++trap; }
-        assert(trap == 1);
-        try { o.bar(); } catch (Error e) { ++trap; }
-        assert(trap == 2);
+        assertThrown!NotImplementedError(o.foo());
+        assertThrown!NotImplementedError(o.bar());
     }
     // doc example
     {
@@ -2593,6 +2593,7 @@ private static:
                 string postc = "";
                 if (is(Func ==    shared)) postc ~= " shared";
                 if (is(Func ==     const)) postc ~= " const";
+                if (is(Func ==     inout)) postc ~= " inout";
                 if (is(Func == immutable)) postc ~= " immutable";
                 return postc;
             }
@@ -2726,21 +2727,11 @@ template generateEmptyFunction(C, func.../+[BUG 4217]+/)
 }
 
 /// ditto
-template generateAssertTrap(C, func.../+[BUG 4217]+/)
+template generateAssertTrap(C, func...)
 {
-    static if (functionAttributes!(func) & FunctionAttribute.nothrow_) //XXX
-    {
-        pragma(msg, "Warning: WhiteHole!(", C, ") used assert(0) instead ",
-                "of Error for the auto-implemented nothrow function ",
-                C, ".", __traits(identifier, func));
-        enum string generateAssertTrap =
-            `assert(0, "` ~ C.stringof ~ "." ~ __traits(identifier, func)
-                    ~ ` is not implemented");`;
-    }
-    else
-        enum string generateAssertTrap =
-            `throw new NotImplementedError("` ~ C.stringof ~ "."
-                    ~ __traits(identifier, func) ~ `");`;
+    enum string generateAssertTrap =
+        `throw new NotImplementedError("` ~ C.stringof ~ "."
+                ~ __traits(identifier, func) ~ `");`;
 }
 
 private
@@ -3947,6 +3938,23 @@ mixin template Proxy(alias a)
             }
         }
     }
+
+    static if (isArray!(typeof(a)))
+    {
+        auto opDollar() const { return a.length; }
+    }
+    else static if (is(typeof(a.opDollar!0)))
+    {
+        auto ref opDollar(size_t pos)() { return a.opDollar!pos(); }
+    }
+    else static if (is(typeof(a.opDollar) == function))
+    {
+        auto ref opDollar() { return a.opDollar(); }
+    }
+    else static if (is(typeof(a.opDollar)))
+    {
+        alias opDollar = a.opDollar;
+    }
 }
 unittest
 {
@@ -4197,6 +4205,43 @@ unittest
     Typedef!(int[3]) sa;
     static assert(sa.length == 3);
     static assert(typeof(sa).length == 3);
+
+    Typedef!(int[3]) dollar1;
+    assert(dollar1[0..$] is dollar1[0..3]);
+
+    Typedef!(int[]) dollar2;
+    dollar2.length = 3;
+    assert(dollar2[0..$] is dollar2[0..3]);
+
+    static struct Dollar1
+    {
+        static struct DollarToken {}
+        enum opDollar = DollarToken.init;
+        auto opSlice(size_t, DollarToken) { return 1; }
+        auto opSlice(size_t, size_t) { return 2; }
+    }
+
+    Typedef!Dollar1 drange1;
+    assert(drange1[0..$] == 1);
+    assert(drange1[0..1] == 2);
+
+    static struct Dollar2
+    {
+        size_t opDollar(size_t pos)() { return pos == 0 ? 1 : 100; }
+        size_t opIndex(size_t i, size_t j) { return i + j; }
+    }
+
+    Typedef!Dollar2 drange2;
+    assert(drange2[$, $] == 101);
+
+    static struct Dollar3
+    {
+        size_t opDollar() { return 123; }
+        size_t opIndex(size_t i) { return i; }
+    }
+
+    Typedef!Dollar3 drange3;
+    assert(drange3[$] == 123);
 }
 
 unittest

@@ -7,8 +7,8 @@ $(BOOKTABLE ,
 $(TR $(TH Category) $(TH Functions)
 )
 $(TR $(TDNW Searching) $(TD $(MYREF all) $(MYREF any) $(MYREF balancedParens) $(MYREF
-boyerMooreFinder) $(MYREF canFind) $(MYREF count) $(MYREF countUntil)
-$(MYREF commonPrefix) $(MYREF endsWith) $(MYREF find) $(MYREF
+boyerMooreFinder) $(MYREF canFind) $(MYREF commonPrefix) $(MYREF count)
+$(MYREF countUntil) $(MYREF endsWith) $(MYREF find) $(MYREF
 findAdjacent) $(MYREF findAmong) $(MYREF findSkip) $(MYREF findSplit)
 $(MYREF findSplitAfter) $(MYREF findSplitBefore) $(MYREF minCount)
 $(MYREF minPos) $(MYREF mismatch) $(MYREF skipOver) $(MYREF startsWith)
@@ -101,6 +101,9 @@ $(TR $(TDNW $(LREF countUntil)) $(TD $(D countUntil(a, b))
 returns the number of steps taken in $(D a) to reach $(D b); for
 example, $(D countUntil("hello!", "o")) returns $(D 4).)
 )
+$(TR $(TDNW $(LREF commonPrefix)) $(TD $(D commonPrefix("parakeet",
+"parachute")) returns $(D "para").)
+)
 $(TR $(TDNW $(LREF endsWith)) $(TD $(D endsWith("rocks", "ks"))
 returns $(D true).)
 )
@@ -138,6 +141,9 @@ $(TR $(TDNW $(LREF minCount)) $(TD $(D minCount([2, 1, 1, 4,
 $(TR $(TDNW $(LREF minPos)) $(TD $(D minPos([2, 3, 1, 3, 4,
 1])) returns the subrange $(D [1, 3, 4, 1]), i.e., positions the range
 at the first occurrence of its minimal element.)
+)
+$(TR $(TDNW $(LREF mismatch)) $(TD $(D mismatch("parakeet", "parachute"))
+returns the two ranges $(D "keet") and $(D "chute").)
 )
 $(TR $(TDNW $(LREF skipOver)) $(TD Assume $(D a = "blah"). Then
 $(D skipOver(a, "bi")) leaves $(D a) unchanged and returns $(D false),
@@ -241,6 +247,9 @@ $(TR $(TDNW $(LREF partialSort)) $(TD If $(D a = [5, 4, 3, 2,
 $(TR $(TDNW $(LREF partition)) $(TD Partitions a range
 according to a predicate.)
 )
+$(TR $(TDNW $(LREF partition3)) $(TD Partitions a range
+in three parts (less than, equal, greater than the given pivot).)
+)
 $(TR $(TDNW $(LREF schwartzSort)) $(TD Sorts with the help of
 the $(LUCKY Schwartzian transform).)
 )
@@ -306,6 +315,9 @@ range to another.)
 $(TR $(TDNW $(LREF moveSome)) $(TD Moves as many elements as
 possible from one range to another.)
 )
+$(TR $(TDNW $(LREF remove)) $(TD Removes elements from a range
+in-place, and returns the shortened range.)
+)
 $(TR $(TDNW $(LREF reverse)) $(TD If $(D a = [1, 2, 3]), $(D
 reverse(a)) changes it to $(D [3, 2, 1]).)
 )
@@ -336,7 +348,7 @@ $(TR $(TDNW $(LREF uninitializedFill)) $(TD Fills a range
 
 Macros:
 WIKI = Phobos/StdAlgorithm
-MYREF = <font face='Consolas, "Bitstream Vera Sans Mono", "Andale Mono", Monaco, "DejaVu Sans Mono", "Lucida Console", monospace'><a href="#$1">$1</a>&nbsp;</font>
+MYREF = <font face='Consolas, "Bitstream Vera Sans Mono", "Andale Mono", Monaco, "DejaVu Sans Mono", "Lucida Console", monospace'><a href="#.$1">$1</a>&nbsp;</font>
 
 Copyright: Andrei Alexandrescu 2008-.
 
@@ -1995,7 +2007,7 @@ See_Also:
     $(XREF exception, pointsTo)
  */
 void swap(T)(ref T lhs, ref T rhs) @trusted pure nothrow
-if (allMutableFields!T && !is(typeof(lhs.proxySwap(rhs))))
+if (isBlitAssignable!T && !is(typeof(lhs.proxySwap(rhs))))
 {
     static if (hasElaborateAssign!T || !isAssignable!T)
     {
@@ -2042,36 +2054,6 @@ if (allMutableFields!T && !is(typeof(lhs.proxySwap(rhs))))
 void swap(T)(ref T lhs, ref T rhs) if (is(typeof(lhs.proxySwap(rhs))))
 {
     lhs.proxySwap(rhs);
-}
-
-/+
-    Trait like isMutable. It also verifies that the fields inside a value
-    type aggregate are also mutable.
-
-     A "value type aggregate" is a struct or an union, but not a class nor
-     an interface.
-+/
-private template allMutableFields(T)
-{
-    alias OT = OriginalType!T;
-    static if (is(OT == struct) || is(OT == union))
-        enum allMutableFields = isMutable!OT && allSatisfy!(.allMutableFields, FieldTypeTuple!OT);
-    else
-        enum allMutableFields = isMutable!OT;
-}
-
-unittest
-{
-    static assert( allMutableFields!int);
-    static assert(!allMutableFields!(const int));
-
-    class C{const int i;}
-    static assert( allMutableFields!C);
-
-    struct S1{int i;}
-    struct S2{const int i;}
-    static assert( allMutableFields!S1);
-    static assert(!allMutableFields!S2);
 }
 
 unittest
@@ -2173,6 +2155,14 @@ unittest
     //11853
     alias T = Tuple!(int, double);
     static assert(isAssignable!T);
+}
+
+unittest
+{
+    // 12024
+    import std.datetime;
+    SysTime a, b;
+    swap(a, b);
 }
 
 void swapFront(R1, R2)(R1 r1, R2 r2)
@@ -5822,9 +5812,9 @@ if (is(typeof(binaryFun!pred(r1.front, r2.front))))
     return r2.empty ? (r1 = r, true) : false;
 }
 
+///
 unittest
 {
-    //scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " done.");
     auto s1 = "Hello world";
     assert(!skipOver(s1, "Ha"));
     assert(s1 == "Hello world");
@@ -5851,6 +5841,7 @@ if (is(typeof(binaryFun!pred(r.front, e))))
         : false;
 }
 
+///
 unittest {
     auto s1 = "Hello world";
     assert(!skipOver(s1, 'a'));
@@ -6774,6 +6765,7 @@ int cmp(alias pred = "a < b", R1, R2)(R1 r1, R2 r2) if (isSomeString!R1 && isSom
     }
 }
 
+///
 unittest
 {
     int result;
@@ -10991,6 +10983,20 @@ template canFind(alias pred="a == b")
     }
 }
 
+///
+unittest
+{
+    assert(canFind([0, 1, 2, 3], 2) == true);
+    assert(canFind([0, 1, 2, 3], [1, 2], [2, 3]));
+    assert(canFind([0, 1, 2, 3], [1, 2], [2, 3]) == 1);
+    assert(canFind([0, 1, 2, 3], [1, 7], [2, 3]));
+    assert(canFind([0, 1, 2, 3], [1, 7], [2, 3]) == 2);
+
+    assert(canFind([0, 1, 2, 3], 4) == false);
+    assert(!canFind([0, 1, 2, 3], [1, 3], [2, 4]));
+    assert(canFind([0, 1, 2, 3], [1, 3], [2, 4]) == 0);
+}
+
 unittest
 {
     debug(std_algorithm) scope(success)
@@ -11001,16 +11007,6 @@ unittest
         auto b = a[a.length / 2];
         assert(canFind(a, b));
     }
-
-    assert(canFind([0, 1, 2, 3], 2) == true);
-    assert(canFind([0, 1, 2, 3], [1, 2], [2, 3]));
-    assert(canFind([0, 1, 2, 3], [1, 2], [2, 3]) == 1);
-    assert(canFind([0, 1, 2, 3], [1, 7], [2, 3]));
-    assert(canFind([0, 1, 2, 3], [1, 7], [2, 3]) == 2);
-
-    assert(canFind([0, 1, 2, 3], 4) == false);
-    assert(!canFind([0, 1, 2, 3], [1, 3], [2, 4]));
-    assert(canFind([0, 1, 2, 3], [1, 3], [2, 4]) == 0);
 }
 
 unittest
