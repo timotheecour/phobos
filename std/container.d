@@ -1,7 +1,7 @@
 // Written in the D programming language.
 
 /**
-Defines generic _containers.
+Defines generic containers.
 
 Source: $(PHOBOSSRC std/_container.d)
 Macros:
@@ -17,11 +17,15 @@ boost.org/LICENSE_1_0.txt)).
 
 Authors: Steven Schveighoffer, $(WEB erdani.com, Andrei Alexandrescu)
 
-$(BOOKTABLE $(TEXTWITHCOMMAS Container primitives. Below, $(D C) means
-a _container type, $(D c) is a value of _container type, $(D n$(SUB
-x)) represents the effective length of value $(D x), which could be a
-single element (in which case $(D n$(SUB x)) is $(D 1)), a _container,
-or a range.),
+$(BOOKTABLE $(TEXTWITHCOMMAS Container primitives. A _container need not
+implement all primitives, but if a primitive is implemented, it must
+support the syntax described in the $(B syntax) column with the semantics
+described in the $(B description) column, and it must not have worse worst-case
+complexity than denoted in big-O notation in the $(BIGOH &middot;) column.
+Below, $(D C) means a _container type, $(D c) is a value of _container
+type, $(D n$(SUBx)) represents the effective length of value $(D x),
+which could be a single element (in which case $(D n$(SUB x)) is $(D 1)),
+a _container, or a range.),
 
 $(TR $(TH Syntax) $(TH $(BIGOH &middot;)) $(TH Description))
 
@@ -257,7 +261,7 @@ struct TotalContainer(T)
 If the container has a notion of key-value mapping, $(D KeyType)
 defines the type of the key of the container.
  */
-    alias T KeyType;
+    alias KeyType = T;
 
 /**
 If the container has a notion of multikey-value mapping, $(D
@@ -267,7 +271,7 @@ the type of the $(D k)th key of the container.
 A container may define both $(D KeyType) and $(D KeyTypes), e.g. in
 the case it has the notion of primary/preferred key.
  */
-    alias TypeTuple!T KeyTypes;
+    alias KeyTypes = TypeTuple!T;
 
 /**
 If the container has a notion of key-value mapping, $(D ValueType)
@@ -275,7 +279,7 @@ defines the type of the value of the container. Typically, a map-style
 container mapping values of type $(D K) to values of type $(D V)
 defines $(D KeyType) to be $(D K) and $(D ValueType) to be $(D V).
  */
-    alias T ValueType;
+    alias ValueType = T;
 
 /**
 Defines the container's primary range, which embodies one of the
@@ -285,13 +289,20 @@ Generally a container may define several types of ranges.
  */
     struct Range
     {
-        /// Range primitives.
+        /++
+        Range primitives.
+        +/
         @property bool empty()
         {
             assert(0);
         }
         /// Ditto
-        @property T front()
+        @property ref T front() //ref return optional
+        {
+            assert(0);
+        }
+        /// Ditto
+        @property void front(T value) //Only when front does not return by ref
         {
             assert(0);
         }
@@ -306,7 +317,12 @@ Generally a container may define several types of ranges.
             assert(0);
         }
         /// Ditto
-        @property T back()
+        @property ref T back() //ref return optional
+        {
+            assert(0);
+        }
+        /// Ditto
+        @property void back(T value) //Only when front does not return by ref
         {
             assert(0);
         }
@@ -321,17 +337,22 @@ Generally a container may define several types of ranges.
             assert(0);
         }
         /// Ditto
-        T opIndex(size_t i)
+        T opIndex(size_t i) //ref return optional
         {
             assert(0);
         }
         /// Ditto
-        void opIndexAssign(T value, size_t i)
+        void opIndexAssign(size_t i, T value) //Only when front does not return by ref
         {
             assert(0);
         }
         /// Ditto
-        void opIndexOpAssign(string op)(T value, uint i)
+        T opIndexUnary(string op)(size_t i) //Only when front does not return by ref
+        {
+            assert(0);
+        }
+        /// Ditto
+        void opIndexOpAssign(string op)(size_t i, T value) //Only when front does not return by ref
         {
             assert(0);
         }
@@ -431,7 +452,12 @@ Forward to $(D opSlice().front) and $(D opSlice().back), respectively.
 
 Complexity: $(BIGOH log(n))
  */
-    @property T front()
+    @property ref T front() //ref return optional
+    {
+        assert(0);
+    }
+    /// Ditto
+    @property void front(T value) //Only when front does not return by ref
     {
         assert(0);
     }
@@ -441,7 +467,12 @@ Complexity: $(BIGOH log(n))
         assert(0);
     }
     /// Ditto
-    @property T back()
+    @property ref T back() //ref return optional
+    {
+        assert(0);
+    }
+    /// Ditto
+    @property void back(T value) //Only when front does not return by ref
     {
         assert(0);
     }
@@ -454,24 +485,27 @@ Complexity: $(BIGOH log(n))
 /**
 Indexing operators yield or modify the value at a specified index.
  */
-    /**
-       Indexing operators yield or modify the value at a specified index.
-     */
-    ValueType opIndex(KeyType)
+    ref T opIndex(KeyType) //ref return optional
     {
         assert(0);
     }
     /// ditto
-    void opIndexAssign(KeyType)
+    void opIndexAssign(KeyType i, T value) //Only when front does not return by ref
     {
         assert(0);
     }
     /// ditto
-    void opIndexOpAssign(string op)(KeyType)
+    T opIndexUnary(string op)(KeyType i) //Only when front does not return by ref
     {
         assert(0);
     }
-    T moveAt(size_t i)
+    /// ditto
+    void opIndexOpAssign(string op)(KeyType i, T value) //Only when front does not return by ref
+    {
+        assert(0);
+    }
+    /// ditto
+    T moveAt(KeyType i)
     {
         assert(0);
     }
@@ -479,7 +513,7 @@ Indexing operators yield or modify the value at a specified index.
 /**
 $(D k in container) returns true if the given key is in the container.
  */
-    bool opBinary(string op)(KeyType k) if (op == "in")
+    bool opBinaryRight(string op)(KeyType k) if (op == "in")
     {
         assert(0);
     }
@@ -840,7 +874,7 @@ assert(equal(arr[], [4, 2, 3, 1]));
 auto rbt = make!(RedBlackTree!(int, "a > b"))([4, 2, 3, 1]);
 assert(equal(rbt[], [4, 3, 2, 1]));
 
-alias make!(DList!int) makeList;
+alias makeList = make!(DList!int);
 auto list = makeList([1, 7, 42]);
 assert(equal(list[], [1, 7, 42]));
 --------------------
@@ -870,7 +904,7 @@ unittest
     auto rbt = make!(RedBlackTree!(int, "a > b"))([4, 2, 3, 1]);
     assert(equal(rbt[], [4, 3, 2, 1]));
 
-    alias make!(DList!int) makeList;
+    alias makeList = make!(DList!int);
     auto list = makeList([1, 7, 42]);
     assert(equal(list[], [1, 7, 42]));
 }
@@ -993,20 +1027,10 @@ Defines the container's primary range, which embodies a forward range.
         @property bool empty() const { return !_head; }
 
         /// ditto
-        @property T front()
+        @property ref T front()
         {
             assert(!empty, "SList.Range.front: Range is empty");
             return _head._payload;
-        }
-
-        /// ditto
-        static if (isAssignable!(T, T))
-        {
-            @property void front(T value)
-            {
-                assert(!empty, "SList.Range.front: Range is empty");
-                move(value, _head._payload);
-            }
         }
 
         /// ditto
@@ -1074,24 +1098,10 @@ Forward to $(D opSlice().front).
 
 Complexity: $(BIGOH 1)
      */
-    @property T front()
+    @property ref T front()
     {
         assert(!empty, "SList.front: List is empty");
         return _root._payload;
-    }
-
-/**
-Forward to $(D opSlice().front(value)).
-
-Complexity: $(BIGOH 1)
-     */
-    static if (isAssignable!(T, T))
-    {
-        @property void front(T value)
-        {
-            assert(!empty, "SList.front: List is empty");
-            move(value, _root._payload);
-        }
     }
 
     unittest
@@ -1173,13 +1183,13 @@ Complexity: $(BIGOH m), where $(D m) is the length of $(D stuff)
     }
 
 /// ditto
-    alias insertFront insert;
+    alias insert = insertFront;
 
 /// ditto
-    alias insert stableInsert;
+    alias stableInsert = insert;
 
     /// ditto
-    alias insertFront stableInsertFront;
+    alias stableInsertFront = insertFront;
 
 /**
 Picks one value from the front of the container, removes it from the
@@ -1199,7 +1209,7 @@ Complexity: $(BIGOH 1).
         return result;
     }
     /// ditto
-    alias removeAny stableRemoveAny;
+    alias stableRemoveAny = removeAny;
 
 /**
 Removes the value at the front of the container. The stable version
@@ -1217,7 +1227,7 @@ Complexity: $(BIGOH 1).
     }
 
     /// ditto
-    alias removeFront stableRemoveFront;
+    alias stableRemoveFront = removeFront;
 
 /**
 Removes $(D howMany) values at the front or back of the
@@ -1244,7 +1254,7 @@ Complexity: $(BIGOH howMany * log(n)).
     }
 
     /// ditto
-    alias removeFront stableRemoveFront;
+    alias stableRemoveFront = removeFront;
 
 /**
 Inserts $(D stuff) after range $(D r), which must be a range
@@ -1328,7 +1338,7 @@ $(D r) and $(D m) is the length of $(D stuff).
     }
 
 /// ditto
-    alias insertAfter stableInsertAfter;
+    alias stableInsertAfter = insertAfter;
 
 /**
 Removes a range from the list in linear time.
@@ -1383,7 +1393,7 @@ Complexity: $(BIGOH n)
     }
 
 /// ditto
-    alias linearRemove stableLinearRemove;
+    alias stableLinearRemove = linearRemove;
 }
 
 unittest
@@ -1670,20 +1680,10 @@ elements in $(D rhs).
         }
 
         /// ditto
-        @property T front()
+        @property ref T front()
         {
             assert(!empty, "DList.Range.front: Range is empty");
             return _first._payload;
-        }
-
-        /// ditto
-        static if(isAssignable!(T, T))
-        {
-            @property void front(T value)
-            {
-                assert(!empty, "DList.Range.front: Range is empty");
-                move(value, _first._payload);
-            }
         }
 
         /// ditto
@@ -1704,20 +1704,10 @@ elements in $(D rhs).
         @property Range save() { return this; }
 
         /// Bidirectional range primitives.
-        @property T back()
+        @property ref T back()
         {
             assert(!empty, "DList.Range.back: Range is empty");
             return _last._payload;
-        }
-
-        /// ditto
-        static if(isAssignable!(T, T))
-        {
-            @property void back(T value)
-            {
-                assert(!empty, "DList.Range.back: Range is empty");
-                move(value, _last._payload);
-            }
         }
 
         /// ditto
@@ -1780,24 +1770,10 @@ Forward to $(D opSlice().front).
 
 Complexity: $(BIGOH 1)
      */
-    @property T front()
+    @property ref T front()
     {
         assert(!empty, "DList.front: List is empty");
         return _first._payload;
-    }
-
-/**
-Forward to $(D opSlice().front(value)).
-
-Complexity: $(BIGOH 1)
-     */
-    static if(isAssignable!(T,T))
-    {
-        @property void front(T value)
-        {
-            assert(!empty, "DList.front: List is empty");
-            move(value, _first._payload);
-        }
     }
 
 /**
@@ -1805,24 +1781,10 @@ Forward to $(D opSlice().back).
 
 Complexity: $(BIGOH 1)
      */
-    @property T back()
+    @property ref T back()
     {
         assert(!empty, "DList.back: List is empty");
         return _last._payload;
-    }
-
-/**
-Forward to $(D opSlice().back(value)).
-
-Complexity: $(BIGOH 1)
-     */
-    static if(isAssignable!(T,T))
-    {
-        @property void back(T value)
-        {
-            assert(!empty, "DList.back: List is empty");
-            move(value, _last._payload);
-        }
     }
 
 /**
@@ -1926,16 +1888,16 @@ Complexity: $(BIGOH log(n))
     }
 
     /// ditto
-    alias insertBack insert;
+    alias insert = insertBack;
 
     /// ditto
-    alias insert stableInsert;
+    alias stableInsert = insert;
 
     /// ditto
-    alias insertFront stableInsertFront;
+    alias stableInsertFront = insertFront;
 
     /// ditto
-    alias insertBack stableInsertBack;
+    alias stableInsertBack = insertBack;
 
 /**
 Picks one value from the front of the container, removes it from the
@@ -1962,7 +1924,7 @@ Complexity: $(BIGOH 1).
         return result;
     }
     /// ditto
-    alias removeAny stableRemoveAny;
+    alias stableRemoveAny = removeAny;
 
 /**
 Removes the value at the front/back of the container. The stable version
@@ -1987,7 +1949,7 @@ Complexity: $(BIGOH 1).
     }
 
     /// ditto
-    alias removeFront stableRemoveFront;
+    alias stableRemoveFront = removeFront;
 
     /// ditto
     void removeBack()
@@ -2001,7 +1963,7 @@ Complexity: $(BIGOH 1).
     }
 
     /// ditto
-    alias removeBack stableRemoveBack;
+    alias stableRemoveBack = removeBack;
 
 /**
 Removes $(D howMany) values at the front or back of the
@@ -2035,7 +1997,7 @@ Complexity: $(BIGOH howMany * log(n)).
     }
 
     /// ditto
-    alias removeFront stableRemoveFront;
+    alias stableRemoveFront = removeFront;
 
     /// ditto
     size_t removeBack(size_t howMany)
@@ -2054,7 +2016,7 @@ Complexity: $(BIGOH howMany * log(n)).
     }
 
     /// ditto
-    alias removeBack stableRemoveBack;
+    alias stableRemoveBack = removeBack;
 
 /**
 Inserts $(D stuff) after range $(D r), which must be a non-empty range
@@ -2080,7 +2042,7 @@ $(D r) and $(D m) is the length of $(D stuff).
     }
 
     /// ditto
-    alias insertBefore stableInsertBefore;
+    alias stableInsertBefore = insertBefore;
 
     /// ditto
     size_t insertAfter(Stuff)(Range r, Stuff stuff)
@@ -2090,12 +2052,13 @@ $(D r) and $(D m) is the length of $(D stuff).
     }
 
     /// ditto
-    alias insertAfter stableInsertAfter;
+    alias stableInsertAfter = insertAfter;
 
     // Helper: insert $(D stuff) before Node $(D n). If $(D n) is $(D null) then insert at end.
     private size_t insertBeforeNode(Stuff)(Node* n, Stuff stuff)
     if (isInputRange!Stuff && isImplicitlyConvertible!(ElementType!Stuff, T))
-    {        size_t result;
+    {
+        size_t result;
         if(stuff.empty) return result;
 
         Node* first;
@@ -2271,9 +2234,9 @@ Complexity: $(BIGOH r.walkLength)
     /** $(RED Scheduled for deprecation. These methods are not actually stable.
     Use the standard $(D remove) or $(D linearRemove) instead.)
          */
-    alias remove stableRemove;
+    alias stableRemove = remove;
     /// ditto
-    alias linearRemove stableLinearRemove;
+    alias stableLinearRemove = linearRemove;
 }
 
 unittest
@@ -2309,7 +2272,7 @@ unittest
 
 unittest
 {
-    alias DList!int IntList;
+    alias IntList = DList!int;
     IntList list = IntList([0,1,2,3]);
     assert(equal(list[],[0,1,2,3]));
     list.insertBack([4,5,6,7]);
@@ -2324,7 +2287,7 @@ unittest
 
 unittest
 {
-    alias DList!int IntList;
+    alias IntList = DList!int;
     IntList list = IntList([0,1,2,3]);
     auto range = list[];
     for( ; !range.empty; range.popFront())
@@ -2643,7 +2606,7 @@ if (!is(Unqual!T == bool))
             return result;
         }
     }
-    private alias RefCounted!(Payload, RefCountedAutoInitialize.no) Data;
+    private alias Data = RefCounted!(Payload, RefCountedAutoInitialize.no);
     private Data _data;
 
 /**
@@ -2719,34 +2682,18 @@ Defines the container's primary range, which is a random-access range.
         {
             return _b - _a;
         }
+        alias opDollar = length;
 
-        size_t opDollar() @safe pure nothrow const
-        {
-            return length;
-        }
-
-        @property T front()
+        @property ref T front()
         {
             version (assert) if (empty) throw new RangeError();
             return _outer[_a];
         }
 
-        @property T back()
+        @property ref T back()
         {
             version (assert) if (empty) throw new RangeError();
             return _outer[_b - 1];
-        }
-
-        @property void front(T value)
-        {
-            version (assert) if (empty) throw new RangeError();
-            _outer[_a] = move(value);
-        }
-
-        @property void back(T value)
-        {
-            version (assert) if (empty) throw new RangeError();
-            _outer[_b - 1] = move(value);
         }
 
         void popFront() @safe pure nothrow
@@ -2779,36 +2726,10 @@ Defines the container's primary range, which is a random-access range.
             return move(_outer._data._payload[_a + i]);
         }
 
-        T opIndex(size_t i)
+        ref T opIndex(size_t i)
         {
             version (assert) if (_a + i >= _b) throw new RangeError();
             return _outer[_a + i];
-        }
-
-        void opIndexUnary(string op)(size_t i)
-            if(op == "++" || op == "--")
-        {
-            version (assert) if (_a + i >= _b) throw new RangeError();
-            mixin(op~"_outer[_a + i];");
-        }
-
-        T opIndexUnary(string op)(size_t i)
-            if(op != "++" && op != "--")
-        {
-            version (assert) if (_a + i >= _b) throw new RangeError();
-            mixin("return "~op~"_outer[_a + i];");
-        }
-
-        void opIndexAssign(T value, size_t i)
-        {
-            version (assert) if (_a + i >= _b) throw new RangeError();
-            _outer[_a + i] = value;
-        }
-
-        void opIndexOpAssign(string op)(T value, size_t i)
-        {
-            version (assert) if (_a + i >= _b) throw new RangeError();
-            mixin("_outer[i] "~op~"= value;");
         }
 
         typeof(this) opSlice()
@@ -2970,31 +2891,17 @@ Precondition: $(D !empty)
 
 Complexity: $(BIGOH 1)
      */
-    @property T front()
+    @property ref T front()
     {
         version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
         return _data._payload[0];
     }
 
     /// ditto
-    @property void front(T value)
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        _data._payload[0] = value;
-    }
-
-    /// ditto
-    @property T back()
+    @property ref T back()
     {
         version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
         return _data._payload[$ - 1];
-    }
-
-    /// ditto
-    @property void back(T value)
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        _data._payload[$ - 1] = value;
     }
 
 /**
@@ -3004,40 +2911,10 @@ Precondition: $(D i < length)
 
 Complexity: $(BIGOH 1)
      */
-    T opIndex(size_t i)
+    ref T opIndex(size_t i)
     {
         version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
         return _data._payload[i];
-    }
-
-    /// ditto
-    void opIndexUnary(string op)(size_t i)
-        if(op == "++" || op == "--")
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        mixin(op~"_data._payload[i];");
-    }
-
-    /// ditto
-    T opIndexUnary(string op)(size_t i)
-        if(op != "++" && op != "--")
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        mixin("return "~op~"_data._payload[i];");
-    }
-
-    /// ditto
-    void opIndexAssign(T value, size_t i)
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        _data._payload[i] = value;
-    }
-
-    /// ditto
-    void opIndexOpAssign(string op)(T value, size_t i)
-    {
-        version (assert) if (!_data.refCountedStore.isInitialized) throw new RangeError();
-        mixin("_data._payload[i] "~op~"= value;");
     }
 
 /**
@@ -3047,19 +2924,20 @@ Precondition: $(D i < j && j < length)
 
 Complexity: $(BIGOH slice.length)
      */
-
     void opSliceAssign(T value)
     {
         if (!_data.refCountedStore.isInitialized) return;
         _data._payload[] = value;
     }
 
+    /// ditto
     void opSliceAssign(T value, size_t i, size_t j)
     {
         auto slice = _data.refCountedStore.isInitialized ? _data._payload : T[].init;
         slice[i .. j] = value;
     }
 
+    /// ditto
     void opSliceUnary(string op)()
         if(op == "++" || op == "--")
     {
@@ -3175,7 +3053,7 @@ Complexity: $(BIGOH log(n)).
         return result;
     }
     /// ditto
-    alias removeAny stableRemoveAny;
+    alias stableRemoveAny = removeAny;
 
 /**
 Inserts $(D value) to the front or back of the container. $(D stuff)
@@ -3196,7 +3074,7 @@ elements in $(D stuff)
         return _data.insertBack(stuff);
     }
     /// ditto
-    alias insertBack insert;
+    alias insert = insertBack;
 
 /**
 Removes the value at the back of the container. The stable version
@@ -3218,7 +3096,7 @@ Complexity: $(BIGOH log(n)).
         _data._payload = _data._payload[0 .. $ - 1];
     }
     /// ditto
-    alias removeBack stableRemoveBack;
+    alias stableRemoveBack = removeBack;
 
 /**
 Removes $(D howMany) values at the front or back of the
@@ -3248,7 +3126,7 @@ Complexity: $(BIGOH howMany).
         return howMany;
     }
     /// ditto
-    alias removeBack stableRemoveBack;
+    alias stableRemoveBack = removeBack;
 
 /**
 Inserts $(D stuff) before, after, or instead range $(D r), which must
@@ -3393,7 +3271,7 @@ $(D r)
         return this[length - tailLength .. length];
     }
     /// ditto
-    alias remove stableLinearRemove;
+    alias stableLinearRemove = remove;
 }
 
 unittest
@@ -3492,7 +3370,7 @@ unittest
 {
     auto a = Array!int(0, 1, 2, 3, 4, 5, 6)[];
     auto b = Array!int(6, 5, 4, 3, 2, 1, 0)[];
-    alias typeof(a) A;
+    alias A = typeof(a);
 
     static assert(isRandomAccessRange!A);
     static assert(hasSlicing!A);
@@ -3520,7 +3398,7 @@ version(unittest)
 }
 unittest
 {
-    alias structBug5920 S;
+    alias S = structBug5920;
     uint dMask;
 
     auto arr = Array!S(cast(S[])[]);
@@ -3710,6 +3588,11 @@ unittest //11884
     auto a = Array!int([1, 2, 2].filter!"true"());
 }
 
+unittest //8282
+{
+    auto arr = new Array!int;
+}
+
 // BinaryHeap
 /**
 Implements a $(WEB en.wikipedia.org/wiki/Binary_heap, binary heap)
@@ -3738,17 +3621,6 @@ If $(D Store) is a range, the $(D BinaryHeap) cannot grow beyond the
 size of that range. If $(D Store) is a container that supports $(D
 insertBack), the $(D BinaryHeap) may grow by adding elements to the
 container.
-
-Example:
-----
-// Example from "Introduction to Algorithms" Cormen et al, p 146
-int[] a = [ 4, 1, 3, 2, 16, 9, 10, 14, 8, 7 ];
-auto h = heapify(a);
-// largest element
-assert(h.front == 16);
-// a has the heap property
-assert(equal(a, [ 16, 14, 10, 9, 8, 7, 4, 3, 2, 1 ]));
-----
      */
 struct BinaryHeap(Store, alias less = "a < b")
 if (isRandomAccessRange!(Store) || isRandomAccessRange!(typeof(Store.init[])))
@@ -3765,7 +3637,7 @@ if (isRandomAccessRange!(Store) || isRandomAccessRange!(typeof(Store.init[])))
     }
     private RefCounted!(Data, RefCountedAutoInitialize.no) _payload;
     // Comparison predicate
-    private alias binaryFun!(less) comp;
+    private alias comp = binaryFun!(less);
     // Convenience accessors
     private @property ref Store _store()
     {
@@ -4083,6 +3955,18 @@ must be collected.
         assertValid();
         return true;
     }
+}
+
+///
+unittest
+{
+    // Example from "Introduction to Algorithms" Cormen et al, p 146
+    int[] a = [ 4, 1, 3, 2, 16, 9, 10, 14, 8, 7 ];
+    auto h = heapify(a);
+    // largest element
+    assert(h.front == 16);
+    // a has the heap property
+    assert(equal(a, [ 16, 14, 10, 8, 7, 9, 3, 2, 4, 1 ]));
 }
 
 /**
@@ -4631,17 +4515,17 @@ if (is(Unqual!T == bool))
        Complexity: $(BIGOH m * log(n)), where $(D m) is the number of
        elements in $(D stuff)
      */
-    alias insertBack insert;
+    alias insert = insertBack;
     ///ditto
-    alias insertBack stableInsert;
+    alias stableInsert = insertBack;
 
     /**
        Same as $(D insert(stuff)) and $(D stableInsert(stuff))
        respectively, but relax the complexity constraint to linear.
      */
-    alias insertBack linearInsert;
+    alias linearInsert = insertBack;
     ///ditto
-    alias insertBack stableLinearInsert;
+    alias stableLinearInsert = insertBack;
 
     /**
        Picks one value in the container, removes it from the
@@ -4662,7 +4546,7 @@ if (is(Unqual!T == bool))
         return result;
     }
     /// ditto
-    alias removeAny stableRemoveAny;
+    alias stableRemoveAny = removeAny;
 
     unittest
     {
@@ -4725,7 +4609,7 @@ if (is(Unqual!T == bool))
         else return stuff.length;
     }
     /// ditto
-    alias insertBack stableInsertBack;
+    alias stableInsertBack = insertBack;
 
     /**
        Removes the value at the front or back of the container. The
@@ -4755,7 +4639,7 @@ if (is(Unqual!T == bool))
         }
     }
     /// ditto
-    alias removeBack stableRemoveBack;
+    alias stableRemoveBack = removeBack;
 
     /**
        Removes $(D howMany) values at the front or back of the
@@ -4821,7 +4705,7 @@ if (is(Unqual!T == bool))
         return inserted;
     }
     /// ditto
-    alias insertBefore stableInsertBefore;
+    alias stableInsertBefore = insertBefore;
 
     unittest
     {
@@ -4848,7 +4732,7 @@ if (is(Unqual!T == bool))
         return inserted;
     }
     /// ditto
-    alias insertAfter stableInsertAfter;
+    alias stableInsertAfter = insertAfter;
 
     unittest
     {
@@ -4876,7 +4760,7 @@ if (is(Unqual!T == bool))
         return 1;
     }
     /// ditto
-    alias replace stableReplace;
+    alias stableReplace = replace;
 
     unittest
     {
@@ -4905,7 +4789,7 @@ if (is(Unqual!T == bool))
         return this[r._a .. length];
     }
     /// ditto
-    alias linearRemove stableLinearRemove;
+    alias stableLinearRemove = linearRemove;
 }
 
 unittest
@@ -4952,7 +4836,7 @@ struct RBNode(V)
     /*
      * Convenience alias
      */
-    alias RBNode* Node;
+    alias Node = RBNode*;
 
     private Node _left;
     private Node _right;
@@ -5536,7 +5420,7 @@ struct RBNode(V)
 final class RedBlackTree(T, alias less = "a < b", bool allowDuplicates = false)
     if(is(typeof(binaryFun!less(T.init, T.init))))
 {
-    alias binaryFun!less _less;
+    alias _less = binaryFun!less;
 
     // BUG: this must come first in the struct due to issue 2810
 
@@ -5646,10 +5530,10 @@ final class RedBlackTree(T, alias less = "a < b", bool allowDuplicates = false)
     /**
       * Element type for the tree
       */
-    alias T Elem;
+    alias Elem = T;
 
     // used for convenience
-    private alias RBNode!Elem.Node Node;
+    private alias Node = RBNode!Elem.Node;
 
     private Node   _end;
     private Node   _begin;
@@ -5994,7 +5878,7 @@ final class RedBlackTree(T, alias less = "a < b", bool allowDuplicates = false)
     }
 
     /// ditto
-    alias stableInsert insert;
+    alias insert = stableInsert;
 
     static if(doUnittest) unittest
     {

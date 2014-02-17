@@ -390,7 +390,7 @@ T toImpl(T, S)(S value)
     // Conversion between same size
     foreach (S; TypeTuple!(byte, short, int, long))
     {
-        alias Unsigned!S U;
+        alias U = Unsigned!S;
 
         foreach (Sint; TypeTuple!(S, const S, immutable S))
         foreach (Uint; TypeTuple!(U, const U, immutable U))
@@ -411,8 +411,8 @@ T toImpl(T, S)(S value)
     foreach (i, S1; TypeTuple!(byte, short, int, long))
     foreach (   S2; TypeTuple!(byte, short, int, long)[i+1..$])
     {
-        alias Unsigned!S1 U1;
-        alias Unsigned!S2 U2;
+        alias U1 = Unsigned!S1;
+        alias U2 = Unsigned!S2;
 
         static assert(U1.sizeof < S2.sizeof);
 
@@ -475,9 +475,30 @@ When source type supports member template function opCast, is is used.
 T toImpl(T, S)(S value)
     if (!isImplicitlyConvertible!(S, T) &&
         is(typeof(S.init.opCast!T()) : T) &&
-        !isExactSomeString!T)
+        !isExactSomeString!T &&
+        !is(typeof(T(value))))
 {
     return value.opCast!T();
+}
+
+@safe pure unittest
+{
+    static struct Test
+    {
+        struct T
+        {
+            this(S s) @safe pure { }
+        }
+        struct S
+        {
+            T opCast(U)() @safe pure { assert(false); }
+        }
+    }
+    to!(Test.T)(Test.S());
+
+    // make sure std.conv.to is doing the same thing as initialization
+    Test.S s;
+    Test.T t = s;
 }
 
 @safe pure unittest
@@ -694,18 +715,18 @@ T toImpl(T, S)(S value)
 // Unittest for 6288
 @safe pure unittest
 {
-    template Identity(T)        { alias              T   Identity; }
-    template toConst(T)         { alias        const(T)  toConst; }
-    template toShared(T)        { alias       shared(T)  toShared; }
-    template toSharedConst(T)   { alias shared(const(T)) toSharedConst; }
-    template toImmutable(T)     { alias    immutable(T)  toImmutable; }
+    alias Identity(T)      =              T;
+    alias toConst(T)       =        const T;
+    alias toShared(T)      =       shared T;
+    alias toSharedConst(T) = shared const T;
+    alias toImmutable(T)   =    immutable T;
     template AddModifier(int n) if (0 <= n && n < 5)
     {
-             static if (n == 0) alias Identity       AddModifier;
-        else static if (n == 1) alias toConst        AddModifier;
-        else static if (n == 2) alias toShared       AddModifier;
-        else static if (n == 3) alias toSharedConst  AddModifier;
-        else static if (n == 4) alias toImmutable    AddModifier;
+             static if (n == 0) alias AddModifier = Identity;
+        else static if (n == 1) alias AddModifier = toConst;
+        else static if (n == 2) alias AddModifier = toShared;
+        else static if (n == 3) alias AddModifier = toSharedConst;
+        else static if (n == 4) alias AddModifier = toImmutable;
     }
 
     interface I {}
@@ -719,8 +740,8 @@ T toImpl(T, S)(S value)
     foreach (m1; TypeTuple!(0,1,2,3,4)) // enumerate modifiers
     foreach (m2; TypeTuple!(0,1,2,3,4)) // ditto
     {
-        alias AddModifier!m1 srcmod;
-        alias AddModifier!m2 tgtmod;
+        alias srcmod = AddModifier!m1;
+        alias tgtmod = AddModifier!m2;
         //pragma(msg, srcmod!Object, " -> ", tgtmod!Object, ", convertible = ",
         //            isImplicitlyConvertible!(srcmod!Object, tgtmod!Object));
 
@@ -823,7 +844,7 @@ T toImpl(T, S)(S value)
     else static if (is(S == void[]) || is(S == const(void)[]) || is(S == immutable(void)[]))
     {
         // Converting void array to string
-        alias Unqual!(ElementEncodingType!T) Char;
+        alias Char = Unqual!(ElementEncodingType!T);
         auto raw = cast(const(ubyte)[]) value;
         enforce(raw.length % Char.sizeof == 0,
                 new ConvException("Alignment mismatch in converting a "
@@ -915,16 +936,15 @@ if (is (T == immutable) && isExactSomeString!T && is(S == enum))
         // string to string conversion
         debug(conv) scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " succeeded.");
 
-        alias TypeTuple!(char, wchar, dchar) Chars;
+        alias Chars = TypeTuple!(char, wchar, dchar);
         foreach (LhsC; Chars)
         {
-            alias TypeTuple!(LhsC[], const(LhsC)[], immutable(LhsC)[]) LhStrings;
+            alias LhStrings = TypeTuple!(LhsC[], const(LhsC)[], immutable(LhsC)[]);
             foreach (Lhs; LhStrings)
             {
                 foreach (RhsC; Chars)
                 {
-                    alias TypeTuple!(RhsC[], const(RhsC)[], immutable(RhsC)[])
-                        RhStrings;
+                    alias RhStrings = TypeTuple!(RhsC[], const(RhsC)[], immutable(RhsC)[]);
                     foreach (Rhs; RhStrings)
                     {
                         Lhs s1 = to!Lhs("wyda");
@@ -993,10 +1013,10 @@ if (is (T == immutable) && isExactSomeString!T && is(S == enum))
     // Conversion representing character value with string
     debug(conv) scope(success) writeln("unittest @", __FILE__, ":", __LINE__, " succeeded.");
 
-    alias TypeTuple!(
-         char, const( char), immutable( char),
-        wchar, const(wchar), immutable(wchar),
-        dchar, const(dchar), immutable(dchar)) AllChars;
+    alias AllChars =
+        TypeTuple!( char, const( char), immutable( char),
+                   wchar, const(wchar), immutable(wchar),
+                   dchar, const(dchar), immutable(dchar));
     foreach (Char1; AllChars)
     {
         foreach (Char2; AllChars)
@@ -1444,8 +1464,8 @@ T toImpl(T, S)(S value)
 {
     /* This code is potentially unsafe.
      */
-    alias KeyType!T   K2;
-    alias ValueType!T V2;
+    alias K2 = KeyType!T;
+    alias V2 = ValueType!T;
 
     // While we are "building" the AA, we need to unqualify its values, and only re-qualify at the end
     Unqual!V2[K2] result;
@@ -2289,12 +2309,16 @@ Target parse(Target, Source)(ref Source p)
     case 'i': case 'I':
         p.popFront();
         enforce(!p.empty, bailOut());
-        if (std.ascii.toLower(p.front) == 'n' &&
-                (p.popFront(), enforce(!p.empty, bailOut()), std.ascii.toLower(p.front) == 'f'))
+        if (std.ascii.toLower(p.front) == 'n')
         {
-            // 'inf'
             p.popFront();
-            return sign ? -Target.infinity : Target.infinity;
+            enforce(!p.empty, bailOut());
+            if (std.ascii.toLower(p.front) == 'f')
+            {
+                // 'inf'
+                p.popFront();
+                return sign ? -Target.infinity : Target.infinity;
+            }
         }
         goto default;
     default: {}
@@ -2521,8 +2545,11 @@ Target parse(Target, Source)(ref Source p)
         if (std.ascii.toUpper(p.front) == 'N' && !startsWithZero)
         {
             // nan
-            enforce((p.popFront(), !p.empty && std.ascii.toUpper(p.front) == 'A')
-                    && (p.popFront(), !p.empty && std.ascii.toUpper(p.front) == 'N'),
+            p.popFront();
+            enforce(!p.empty && std.ascii.toUpper(p.front) == 'A',
+                   new ConvException("error converting input to floating point"));
+            p.popFront();
+            enforce(!p.empty && std.ascii.toUpper(p.front) == 'N',
                    new ConvException("error converting input to floating point"));
             // skip past the last 'n'
             p.popFront();
@@ -2999,7 +3026,7 @@ Target parse(Target, Source)(ref Source s)
 
 @safe pure unittest
 {
-    alias typeof(null) NullType;
+    alias NullType = typeof(null);
     auto s1 = "null";
     assert(parse!NullType(s1) is null);
     assert(s1 == "");
@@ -3752,6 +3779,198 @@ unittest
     static assert(__traits(compiles, b = octal!1L));
 }
 
+/+
+emplaceRef is a package function for phobos internal use. It works like
+emplace, but takes its argument by ref (as opposed to "by pointer").
+
+This makes it easier to use, easier to be safe, and faster in a non-inline
+build.
++/
+package ref T emplaceRef(T)(ref T chunk)
+{
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
+
+    static assert (is(typeof({static T i;})),
+        format("Cannot emplace a %1$s because %1$s.this() is annotated with @disable.", T.stringof));
+
+    return emplaceInitializer(chunk);
+}
+// ditto
+package ref T emplaceRef(T, Args...)(ref T chunk, auto ref Args args)
+if (!is(T == struct) && Args.length == 1)
+{
+    alias Arg = Args[0];
+    alias arg = args[0];
+
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
+
+    static assert(is(typeof({T t = args[0];})),
+        format("%s cannot be emplaced from a %s.", T.stringof, Arg.stringof));
+
+    static if (isStaticArray!T)
+    {
+        alias UArg = Unqual!Arg;
+        alias E = typeof(chunk.ptr[0]);
+        enum N = T.length;
+
+        static if (is(Arg : T))
+        {
+            //Matching static array
+            static if (!hasElaborateAssign!T && isAssignable!(T, Arg))
+                chunk = arg;
+            else static if (is(UArg == T))
+            {
+                memcpy(&chunk, &arg, T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(cast(void*)&chunk);
+            }
+            else
+                emplaceRef(chunk, cast(T)arg);
+        }
+        else static if (is(Arg : E[]))
+        {
+            //Matching dynamic array
+            static if (!hasElaborateAssign!T && is(typeof(chunk[] = arg[])))
+                chunk[] = arg[];
+            else static if (is(UArg == E[]))
+            {
+                assert(N == chunk.length, "Array length missmatch in emplace");
+                memcpy(cast(void*)&chunk, arg.ptr, T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(cast(void*)&chunk);
+            }
+            else
+                emplaceRef(chunk, cast(E[])arg);
+        }
+        else static if (is(Arg : E))
+        {
+            //Case matching single element to array.
+            static if (!hasElaborateAssign!T && is(typeof(chunk[] = arg)))
+                chunk[] = arg;
+            else static if (is(UArg == E))
+            {
+                //Note: We copy everything, and then postblit just once.
+                //This is as exception safe as what druntime can provide us.
+                foreach(i; 0 .. N)
+                    memcpy(cast(void*)&(chunk[i]), &arg, E.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(cast(void*)&chunk);
+            }
+            else
+                //Alias this. Coerce.
+                emplaceRef(chunk, cast(E)arg);
+        }
+        else static if (is(typeof(emplaceRef(chunk[0], arg))))
+        {
+            //Final case for everything else:
+            //Types that don't match (int to uint[2])
+            //Recursion for multidimensions
+            static if (!hasElaborateAssign!T && is(typeof(chunk[] = arg)))
+                chunk[] = arg;
+            else
+                foreach(i; 0 .. N)
+                    emplaceRef(chunk[i], arg);
+        }
+        else
+            static assert(0, format("Sorry, this implementation doesn't know how to emplace a %s with a %s", T.stringof, Arg.stringof));
+
+        return chunk;
+    }
+    else
+    {
+        chunk = arg;
+        return chunk;
+    }
+}
+// ditto
+package ref T emplaceRef(T, Args...)(ref T chunk, auto ref Args args)
+if (is(T == struct))
+{
+    static assert (is(T* : void*),
+        format("Cannot emplace a %s because it is qualified.", T.stringof));
+
+    static if (Args.length == 1 && is(Args[0] : T) &&
+        is (typeof({T t = args[0];})) //Check for legal postblit
+        )
+    {
+        static if (is(T == Unqual!(Args[0])))
+        {
+            //Types match exactly: we postblit
+            static if (!hasElaborateAssign!T && isAssignable!T)
+                chunk = args[0];
+            else
+            {
+                memcpy(&chunk, &args[0], T.sizeof);
+                static if (hasElaborateCopyConstructor!T)
+                    typeid(T).postblit(&chunk);
+            }
+        }
+        else
+            //Alias this. Coerce to type T.
+            emplaceRef(chunk, cast(T)args[0]);
+    }
+    else static if (is(typeof(chunk.__ctor(args))))
+    {
+        // T defines a genuine constructor accepting args
+        // Go the classic route: write .init first, then call ctor
+        emplaceInitializer(chunk);
+        chunk.__ctor(args);
+    }
+    else static if (is(typeof(T.opCall(args))))
+    {
+        //Can be built calling opCall
+        emplaceOpCaller(chunk, args); //emplaceOpCaller is deprecated
+    }
+    else static if (is(typeof(T(args))))
+    {
+        // Struct without constructor that has one matching field for
+        // each argument. Individually emplace each field
+        emplaceInitializer(chunk);
+        foreach (i, ref field; chunk.tupleof[0 .. Args.length])
+        {
+            alias Field = typeof(field);
+            static if (is(Field == Unqual!Field))
+                emplaceRef(field, args[i]);
+            else
+                emplaceRef(*cast(Unqual!Field*)&field, args[i]);
+        }
+    }
+    else
+    {
+        //We can't emplace. Try to diagnose a disabled postblit.
+        static assert(!(Args.length == 1 && is(Args[0] : T)),
+            format("Cannot emplace a %1$s because %1$s.this(this) is annotated with @disable.", T.stringof));
+
+        //We can't emplace.
+        static assert(false,
+            format("%s cannot be emplaced from %s.", T.stringof, Args[].stringof));
+    }
+
+    return chunk;
+}
+//emplace helper functions
+private ref T emplaceInitializer(T)(ref T chunk) @trusted pure nothrow
+{
+    static if (!hasElaborateAssign!T && isAssignable!T)
+        chunk = T.init;
+    else
+    {
+        static immutable T init = T.init;
+        memcpy(&chunk, &init, T.sizeof);
+    }
+    return chunk;
+}
+private deprecated("Using static opCall for emplace is deprecated. Plase use emplace(chunk, T(args)) instead.")
+ref T emplaceOpCaller(T, Args...)(ref T chunk, auto ref Args args)
+{
+    static assert (is(typeof({T t = T.opCall(args);})),
+        format("%s.opCall does not return adequate data for construction.", T.stringof));
+    return emplaceRef(chunk, chunk.opCall(args));
+}
+
+
 // emplace
 /**
 Given a pointer $(D chunk) to uninitialized memory (but already typed
@@ -3763,13 +3982,33 @@ as $(D chunk)).
  */
 T* emplace(T)(T* chunk) @safe nothrow pure
 {
-    static assert (is(T* : void*),
-        format("Cannot emplace a %s because it is qualified.", T.stringof));
+    emplaceRef(*chunk);
+    return chunk;
+}
 
-    static assert (is(typeof({static T i;})),
-        format("Cannot emplace a %1$s because %1$s.this() is annotated with @disable.", T.stringof));
+/**
+Given a pointer $(D chunk) to uninitialized memory (but already typed
+as a non-class type $(D T)), constructs an object of type $(D T) at
+that address from arguments $(D args).
 
-    return emplaceInitializer(chunk);
+This function can be $(D @trusted) if the corresponding constructor of
+$(D T) is $(D @safe).
+
+Returns: A pointer to the newly constructed object (which is the same
+as $(D chunk)).
+ */
+T* emplace(T, Args...)(T* chunk, auto ref Args args)
+if (!is(T == struct) && Args.length == 1)
+{
+    emplaceRef(*chunk, args);
+    return chunk;
+}
+/// ditto
+T* emplace(T, Args...)(T* chunk, auto ref Args args)
+if (is(T == struct))
+{
+    emplaceRef(*chunk, args);
+    return chunk;
 }
 
 version(unittest) private struct __conv_EmplaceTest
@@ -3893,104 +4132,7 @@ unittest
     emplace(&ss2, ss1);
 }
 
-/**
-Given a pointer $(D chunk) to uninitialized memory (but already typed
-as a non-class type $(D T)), constructs an object of type $(D T) at
-that address from arguments $(D args).
-
-This function can be $(D @trusted) if the corresponding constructor of
-$(D T) is $(D @safe).
-
-Returns: A pointer to the newly constructed object (which is the same
-as $(D chunk)).
- */
-T* emplace(T, Args...)(T* chunk, auto ref Args args)
-    if (!is(T == struct) && Args.length == 1)
-{
-    alias Arg = Args[0];
-    alias arg = args[0];
-
-    static assert (is(T* : void*),
-        format("Cannot emplace a %s because it is qualified.", T.stringof));
-
-    static assert(is(typeof({T t = args[0];})),
-        format("%s cannot be emplaced from a %s.", T.stringof, Arg.stringof));
-
-    static if (isStaticArray!T)
-    {
-        alias UArg = Unqual!Arg;
-        alias E = typeof(chunk.ptr[0]);
-        enum N = T.length;
-
-        static if (is(Arg : T))
-        {
-            //Matching static array
-            static if (isAssignable!(T, Arg) && !hasElaborateAssign!T)
-                *chunk = arg;
-            else static if (is(UArg == T))
-            {
-                memcpy(chunk, &arg, T.sizeof);
-                static if (hasElaborateCopyConstructor!T)
-                    typeid(T).postblit(cast(void*)&chunk);
-            }
-            else
-                emplace(chunk, cast(T)arg);
-        }
-        else static if (is(Arg : E[]))
-        {
-            //Matching dynamic array
-            static if (is(typeof((*chunk)[] = arg[])) && !hasElaborateAssign!T)
-                (*chunk)[] = arg[];
-            else static if (is(UArg == E[]))
-            {
-                assert(N == chunk.length, "Array length missmatch in emplace");
-                memcpy(cast(void*)chunk, arg.ptr, T.sizeof);
-                static if (hasElaborateCopyConstructor!T)
-                    typeid(T).postblit(cast(void*)&chunk);
-            }
-            else
-                emplace(chunk, cast(E[])arg);
-        }
-        else static if (is(Arg : E))
-        {
-            //Case matching single element to array.
-            static if (is(typeof((*chunk)[] = arg)) && !hasElaborateAssign!T)
-                (*chunk)[] = arg;
-            else static if (is(UArg == E))
-            {
-                //Note: We copy everything, and then postblit just once.
-                //This is as exception safe as what druntime can provide us.
-                foreach(i; 0 .. N)
-                    memcpy(cast(void*)(chunk.ptr + i), &arg, E.sizeof);
-                static if (hasElaborateCopyConstructor!T)
-                    typeid(T).postblit(chunk);
-            }
-            else
-                //Alias this. Coerce.
-                emplace(chunk, cast(E)arg);
-        }
-        else static if (is(typeof(emplace(chunk.ptr, arg))))
-        {
-            //Final case for everything else:
-            //Types that don't match (int to uint[2])
-            //Recursion for multidimensions
-            static if (is(typeof((*chunk)[] = arg)) && !hasElaborateAssign!T)
-                (*chunk)[] = arg;
-
-            foreach(i; 0 .. N)
-                emplace(chunk.ptr + i, arg);
-        }
-        else
-            static assert(0, format("Sorry, this implementation doesn't know how to emplace a %s with a %s", T.stringof, Arg.stringof));
-
-        return chunk;
-    }
-    else
-    {
-        *chunk = arg;
-        return chunk;
-    }
-}
+//Start testing emplace-args here
 
 unittest
 {
@@ -4029,100 +4171,7 @@ unittest
     assert(sa[0].i == 5 && sa[1].i == 5);
 }
 
-/// ditto
-T* emplace(T, Args...)(T* chunk, auto ref Args args)
-    if (is(T == struct))
-{
-    static assert (is(T* : void*),
-        format("Cannot emplace a %s because it is qualified.", T.stringof));
-
-    static if (Args.length == 1 && is(Args[0] : T) &&
-        is (typeof({T t = args[0];})) //Check for legal postblit
-        )
-    {
-        static if (is(T == Unqual!(Args[0])))
-        {
-            //Types match exactly: we postblit
-            static if (isAssignable!T && !hasElaborateAssign!T)
-                *chunk = args[0];
-            else
-            {
-                memcpy(chunk, &args[0], T.sizeof);
-                static if (hasElaborateCopyConstructor!T)
-                    typeid(T).postblit(chunk);
-            }
-        }
-        else
-            //Alias this. Coerce to type T.
-            emplace(chunk, cast(T)args[0]);
-    }
-    else static if (is(typeof(chunk.__ctor(args))))
-    {
-        // T defines a genuine constructor accepting args
-        // Go the classic route: write .init first, then call ctor
-        emplaceInitializer(chunk);
-        chunk.__ctor(args);
-    }
-    else static if (is(typeof(T.opCall(args))))
-    {
-        //Can be built calling opCall
-        emplaceOpCaller(chunk, args); //emplaceOpCaller is deprecated
-    }
-    else static if (is(typeof(T(args))))
-    {
-        // Struct without constructor that has one matching field for
-        // each argument. Individually emplace each field
-        emplaceInitializer(chunk);
-        foreach (i, ref field; chunk.tupleof[0 .. Args.length])
-            emplace(emplaceGetAddr(field), args[i]);
-    }
-    else
-    {
-        //We can't emplace. Try to diagnose a disabled postblit.
-        static assert(!(Args.length == 1 && is(Args[0] : T)),
-            format("Cannot emplace a %1$s because %1$s.this(this) is annotated with @disable.", T.stringof));
-
-        //We can't emplace.
-        static assert(false,
-            format("%s cannot be emplaced from %s.", T.stringof, Args[].stringof));
-    }
-
-    return chunk;
-}
-
-//emplace helper functions
-private T* emplaceInitializer(T)(T* chunk) @trusted pure nothrow
-{
-    static if (isAssignable!T && !hasElaborateAssign!T)
-        *chunk = T.init;
-    else
-    {
-        static immutable T init = T.init;
-        memcpy(chunk, &init, T.sizeof);
-    }
-    return chunk;
-}
-private deprecated("Using static opCall for emplace is deprecated. Plase use emplace(chunk, T(args)) instead.")
-T* emplaceOpCaller(T, Args...)(T* chunk, auto ref Args args)
-{
-    static assert (is(typeof({T t = T.opCall(args);})),
-        format("%s.opCall does not return adequate data for construction.", T.stringof));
-    return emplace(chunk, chunk.opCall(args));
-}
-private
-{
-    //Helper to keep simple aggregate emplace safe.
-    auto emplaceGetAddr(T)(ref T t) @trusted
-    if (is(T == Unqual!T))
-    {
-        return &t;
-    }
-    auto emplaceGetAddr(T)(ref T t)
-    if (!is(T == Unqual!T))
-    {
-        return cast(Unqual!T*)&t;
-    }
-}
+//Start testing emplace-struct here
 
 // Test constructor branch
 unittest
@@ -4602,7 +4651,7 @@ unittest
 
 unittest //@@@9559@@@
 {
-    alias Nullable!int I;
+    alias I = Nullable!int;
     auto ints = [0, 1, 2].map!(i => i & 1 ? I.init : I(i))();
     auto asArray = std.array.array(ints);
 }

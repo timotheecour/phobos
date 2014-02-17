@@ -43,7 +43,7 @@ version (Posix)
 {
     import core.sys.posix.fcntl;
     import core.sys.posix.stdio;
-    alias core.sys.posix.stdio.fileno fileno;
+    alias fileno = core.sys.posix.stdio.fileno;
 }
 
 version (linux)
@@ -69,6 +69,8 @@ version(Windows)
     /+ Waiting for druntime pull 299
     +/
     extern (C) nothrow FILE* _wfopen(in wchar* filename, in wchar* mode);
+
+    import core.sys.windows.windows : HANDLE;
 }
 
 version (DIGITAL_MARS_STDIO)
@@ -89,19 +91,18 @@ version (DIGITAL_MARS_STDIO)
 
         int setmode(int, int);
     }
-    alias _fputc_nlock FPUTC;
-    alias _fputwc_nlock FPUTWC;
-    alias _fgetc_nlock FGETC;
-    alias _fgetwc_nlock FGETWC;
+    alias FPUTC = _fputc_nlock;
+    alias FPUTWC = _fputwc_nlock;
+    alias FGETC = _fgetc_nlock;
+    alias FGETWC = _fgetwc_nlock;
 
-    alias __fp_lock FLOCK;
-    alias __fp_unlock FUNLOCK;
+    alias FLOCK = __fp_lock;
+    alias FUNLOCK = __fp_unlock;
 
-    alias setmode _setmode;
+    alias _setmode = setmode;
     enum _O_BINARY = 0x8000;
     int _fileno(FILE* f) { return f._file; }
-    alias _fileno fileno;
-    alias _fdToHandle _get_osfhandle;
+    alias fileno = _fileno;
 }
 else version (MICROSOFT_STDIO)
 {
@@ -118,17 +119,23 @@ else version (MICROSOFT_STDIO)
         void _unlock_file(FILE*);
         int _setmode(int, int);
         int _fileno(FILE*);
+        FILE* _fdopen(int, const (char)*);
     }
-    alias _fputc_nolock FPUTC;
-    alias _fputwc_nolock FPUTWC;
-    alias _fgetc_nolock FGETC;
-    alias _fgetwc_nolock FGETWC;
+    alias FPUTC = _fputc_nolock;
+    alias FPUTWC = _fputwc_nolock;
+    alias FGETC = _fgetc_nolock;
+    alias FGETWC = _fgetwc_nolock;
 
-    alias _lock_file FLOCK;
-    alias _unlock_file FUNLOCK;
+    alias FLOCK = _lock_file;
+    alias FUNLOCK = _unlock_file;
 
-    enum _O_BINARY = 0x8000;
-
+    enum
+    {
+        _O_RDONLY = 0x0000,
+        _O_APPEND = 0x0004,
+        _O_TEXT   = 0x4000,
+        _O_BINARY = 0x8000,
+    }
 }
 else version (GCC_IO)
 {
@@ -151,13 +158,13 @@ else version (GCC_IO)
                 size_t size, size_t n, _iobuf *stream);
     }
 
-    alias fputc_unlocked FPUTC;
-    alias fputwc_unlocked FPUTWC;
-    alias fgetc_unlocked FGETC;
-    alias fgetwc_unlocked FGETWC;
+    alias FPUTC = fputc_unlocked;
+    alias FPUTWC = fputwc_unlocked;
+    alias FGETC = fgetc_unlocked;
+    alias FGETWC = fgetwc_unlocked;
 
-    alias flockfile FLOCK;
-    alias funlockfile FUNLOCK;
+    alias FLOCK = flockfile;
+    alias FUNLOCK = funlockfile;
 }
 else version (GENERIC_IO)
 {
@@ -175,13 +182,13 @@ else version (GENERIC_IO)
     int fgetc_unlocked(_iobuf* fp) { return fgetc(cast(shared) fp); }
     int fgetwc_unlocked(_iobuf* fp) { return fgetwc(cast(shared) fp); }
 
-    alias fputc_unlocked FPUTC;
-    alias fputwc_unlocked FPUTWC;
-    alias fgetc_unlocked FGETC;
-    alias fgetwc_unlocked FGETWC;
+    alias FPUTC = fputc_unlocked;
+    alias FPUTWC = fputwc_unlocked;
+    alias FGETC = fgetc_unlocked;
+    alias FGETWC = fgetwc_unlocked;
 
-    alias flockfile FLOCK;
-    alias funlockfile FUNLOCK;
+    alias FLOCK = flockfile;
+    alias FUNLOCK = funlockfile;
 }
 else
 {
@@ -402,6 +409,98 @@ Throws: $(D ErrnoException) in case of error.
                         "Cannot run command `"~command~"'"),
                 command, 1, true);
     }
+
+/**
+First calls $(D detach) (throwing on failure), and then attempts to
+associate the given file descriptor with the $(D File). The mode must
+be compatible with the mode of the file descriptor.
+
+Throws: $(D ErrnoException) in case of error.
+ */
+    void fdopen(int fd, in char[] stdioOpenmode = "rb")
+    {
+        fdopen(fd, stdioOpenmode, null);
+    }
+
+    package void fdopen(int fd, in char[] stdioOpenmode, string name)
+    {
+        import std.string : toStringz;
+        import std.exception : errnoEnforce;
+
+        detach();
+
+        version (DIGITAL_MARS_STDIO)
+        {
+            // This is a re-implementation of DMC's fdopen, but without the
+            // mucking with the file descriptor.  POSIX standard requires the
+            // new fdopen'd file to retain the given file descriptor's
+            // position.
+            auto fp = core.stdc.stdio.fopen("NUL", toStringz(stdioOpenmode));
+            errnoEnforce(fp, "Cannot open placeholder NUL stream");
+            FLOCK(fp);
+            auto iob = cast(_iobuf*)fp;
+            .close(iob._file);
+            iob._file = fd;
+            iob._flag &= ~_IOTRAN;
+            FUNLOCK(fp);
+        }
+        else
+        {
+            version (Windows) // MSVCRT
+                auto fp = _fdopen(fd, toStringz(stdioOpenmode));
+            else
+                auto fp = .fdopen(fd, toStringz(stdioOpenmode));
+            errnoEnforce(fp);
+        }
+        this = File(fp, name);
+    }
+
+    // Declare a dummy HANDLE to allow generating documentation
+    // for Windows-only methods.
+    version(StdDdoc) { version(Windows) {} else alias HANDLE = int; }
+
+/**
+First calls $(D detach) (throwing on failure), and then attempts to
+associate the given Windows $(D HANDLE) with the $(D File). The mode must
+be compatible with the access attributes of the handle. Windows only.
+
+Throws: $(D ErrnoException) in case of error.
+*/
+    version(StdDdoc)
+    void windowsHandleOpen(HANDLE handle, in char[] stdioOpenmode);
+
+    version(Windows)
+    void windowsHandleOpen(HANDLE handle, in char[] stdioOpenmode)
+    {
+        import std.exception : errnoEnforce;
+        import std.string : format;
+
+        // Create file descriptors from the handles
+        version (DIGITAL_MARS_STDIO)
+            auto fd = _handleToFD(handle, FHND_DEVICE);
+        else // MSVCRT
+        {
+            int mode;
+            modeLoop:
+            foreach (c; stdioOpenmode)
+                switch (c)
+                {
+                    case 'r': mode |= _O_RDONLY; break;
+                    case '+': mode &=~_O_RDONLY; break;
+                    case 'a': mode |= _O_APPEND; break;
+                    case 'b': mode |= _O_BINARY; break;
+                    case 't': mode |= _O_TEXT;   break;
+                    case ',': break modeLoop;
+                    default: break;
+                }
+
+            auto fd = _open_osfhandle(cast(intptr_t)handle, mode);
+        }
+
+        errnoEnforce(fd >= 0, "Cannot open Windows HANDLE");
+        fdopen(fd, stdioOpenmode, "HANDLE(%s)".format(handle));
+    }
+
 
 /** Returns $(D true) if the file is opened. */
     @property bool isOpen() const pure nothrow
@@ -797,7 +896,7 @@ Throws: $(D Exception) if the file is not opened.
     version(Windows)
     {
         import core.sys.windows.windows;
-        import std.windows.syserror;
+
         private BOOL lockImpl(alias F, Flags...)(ulong start, ulong length,
             Flags flags)
         {
@@ -810,12 +909,14 @@ Throws: $(D Exception) if the file is not opened.
             overlapped.Offset = liStart.LowPart;
             overlapped.OffsetHigh = liStart.HighPart;
             overlapped.hEvent = null;
-            return F(cast(HANDLE)_get_osfhandle(fileno), flags, 0,
-                liLength.LowPart, liLength.HighPart, &overlapped);
+            return F(windowsHandle, flags, 0, liLength.LowPart,
+                liLength.HighPart, &overlapped);
         }
 
         private static T wenforce(T)(T cond, string str)
         {
+            import std.windows.syserror;
+
             if (cond) return cond;
             throw new Exception(str ~ ": " ~ sysErrorString(GetLastError()));
         }
@@ -1026,7 +1127,7 @@ Throws: $(D Exception) if the file is not opened.
         auto w = lockingTextWriter();
         foreach (arg; args)
         {
-            alias typeof(arg) A;
+            alias A = typeof(arg);
             static if (isAggregateType!A || is(A == enum))
             {
                 import std.format : formattedWrite;
@@ -1379,6 +1480,22 @@ Returns the file number corresponding to this object.
         enforce(isOpen, "Attempting to call fileno() on an unopened file");
         return .fileno(cast(FILE*) _p.handle);
     }
+
+/**
+Returns the underlying operating system $(D HANDLE) (Windows only).
+*/
+    version(StdDdoc)
+    @property HANDLE windowsHandle();
+
+    version(Windows)
+    @property HANDLE windowsHandle()
+    {
+        version (DIGITAL_MARS_STDIO)
+            return _fdToHandle(fileno);
+        else
+            return cast(HANDLE)_get_osfhandle(fileno);
+    }
+
 
 // Note: This was documented until 2013/08
 /*
@@ -1924,27 +2041,32 @@ $(D Range) that locks the file and allows fast writing to it.
         }
 
         /// Range primitive implementations.
-        void put(A)(A writeme) if (is(ElementType!A : const(dchar)))
+        void put(A)(A writeme)
+            if (is(ElementType!A : const(dchar)) &&
+                isInputRange!A &&
+                !isInfinite!A)
         {
             import std.exception : errnoEnforce;
 
-            alias ElementEncodingType!A C;
+            alias C = ElementEncodingType!A;
             static assert(!is(C == void));
-            if (writeme[0].sizeof == 1 && orientation <= 0)
+            static if (isSomeString!A && C.sizeof == 1)
             {
-                //file.write(writeme); causes infinite recursion!!!
-                //file.rawWrite(writeme);
-                auto result =
-                    .fwrite(writeme.ptr, C.sizeof, writeme.length, fps);
-                if (result != writeme.length) errnoEnforce(0);
-            }
-            else
-            {
-                // put each character in turn
-                foreach (dchar c; writeme)
+                if (orientation <= 0)
                 {
-                    put(c);
+                    //file.write(writeme); causes infinite recursion!!!
+                    //file.rawWrite(writeme);
+                    auto result =
+                        .fwrite(writeme.ptr, C.sizeof, writeme.length, fps);
+                    if (result != writeme.length) errnoEnforce(0);
+                    return;
                 }
+            }
+
+            // put each character in turn
+            foreach (dchar c; writeme)
+            {
+                put(c);
             }
         }
 
@@ -2063,6 +2185,25 @@ unittest
     auto f = File(deleteme);
     assert(f.size == 5);
     assert(f.tell == 0);
+}
+
+unittest
+{
+    auto deleteme = testFilename();
+    scope(exit) std.file.remove(deleteme);
+
+    {
+        File f = File(deleteme, "w");
+        auto writer = f.lockingTextWriter();
+        static assert(isOutputRange!(typeof(writer), dchar));
+        writer.put("日本語");
+        writer.put("日本語"w);
+        writer.put("日本語"d);
+        writer.put('日');
+        writer.put(chain(only('本'), only('語')));
+        writer.put(repeat('#', 12)); // BUG 11945
+    }
+    assert(File(deleteme).readln() == "日本語日本語日本語日本語############");
 }
 
 /// Used to specify the lock type for $(D File.lock) and $(D File.tryLock).
@@ -2271,7 +2412,7 @@ unittest
  * $(RED Scheduled for deprecation in January 2013.
  *       Please use $(D isFileHandle) instead.)
  */
-alias isFileHandle isStreamingDevice;
+alias isStreamingDevice = isFileHandle;
 
 /***********************************
 For each argument $(D arg) in $(D args), format the argument (as per
@@ -2818,18 +2959,18 @@ struct lines
 //             if (fileName.length && fclose(f))
 //                 StdioException("Could not close file `"~fileName~"'");
 //         }
-        alias ParameterTypeTuple!(dg) Parms;
+        alias Parms = ParameterTypeTuple!(dg);
         static if (isSomeString!(Parms[$ - 1]))
         {
             enum bool duplicate = is(Parms[$ - 1] == string)
                 || is(Parms[$ - 1] == wstring) || is(Parms[$ - 1] == dstring);
             int result = 0;
             static if (is(Parms[$ - 1] : const(char)[]))
-                alias char C;
+                alias C = char;
             else static if (is(Parms[$ - 1] : const(wchar)[]))
-                alias wchar C;
+                alias C = wchar;
             else static if (is(Parms[$ - 1] : const(dchar)[]))
-                alias dchar C;
+                alias C = dchar;
             C[] line;
             static if (Parms.length == 2)
                 Parms[0] i = 0;
@@ -2864,7 +3005,7 @@ struct lines
         import std.exception : assumeUnique;
         import std.conv : to;
 
-        alias ParameterTypeTuple!(dg) Parms;
+        alias Parms = ParameterTypeTuple!(dg);
         enum duplicate = is(Parms[$ - 1] : immutable(ubyte)[]);
         int result = 1;
         int c = void;
@@ -2881,7 +3022,7 @@ struct lines
                 static if (duplicate)
                     auto arg = assumeUnique(buffer);
                 else
-                    alias buffer arg;
+                    alias arg = buffer;
                 // unlock the file while calling the delegate
                 FUNLOCK(f._p.handle);
                 scope(exit) FLOCK(f._p.handle);
@@ -2916,9 +3057,9 @@ unittest
     auto deleteme = testFilename();
     scope(exit) { std.file.remove(deleteme); }
 
-    alias TypeTuple!(string, wstring, dstring,
-                     char[], wchar[], dchar[])
-        TestedWith;
+    alias TestedWith =
+          TypeTuple!(string, wstring, dstring,
+                     char[], wchar[], dchar[]);
     foreach (T; TestedWith) {
         // test looping with an empty file
         std.file.write(deleteme, "");
@@ -2960,8 +3101,8 @@ unittest
 
     // test with ubyte[] inputs
     //@@@BUG 2612@@@
-    //alias TypeTuple!(immutable(ubyte)[], ubyte[]) TestedWith2;
-    alias TypeTuple!(immutable(ubyte)[], ubyte[]) TestedWith2;
+    //alias TestedWith2 = TypeTuple!(immutable(ubyte)[], ubyte[]);
+    alias TestedWith2 = TypeTuple!(immutable(ubyte)[], ubyte[]);
     foreach (T; TestedWith2) {
         // test looping with an empty file
         std.file.write(deleteme, "");
@@ -3655,8 +3796,9 @@ version(linux)
         enforce(sock.connect(s, cast(sock.sockaddr*) &addr, addr.sizeof) != -1,
             new StdioException("Connect failed"));
 
-        return File(enforce(fdopen(s, "w+".ptr)),
-            host ~ ":" ~ to!string(port));
+        File f;
+        f.fdopen(s, "w+", host ~ ":" ~ to!string(port));
+        return f;
     }
 }
 

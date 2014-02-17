@@ -449,9 +449,9 @@ rnd0.seed(unpredictableSeed);
 n = rnd0.front; // different across runs
 ----
  */
-alias LinearCongruentialEngine!(uint, 16807, 0, 2147483647) MinstdRand0;
+alias MinstdRand0 = LinearCongruentialEngine!(uint, 16807, 0, 2147483647);
 /// ditto
-alias LinearCongruentialEngine!(uint, 48271, 0, 2147483647) MinstdRand;
+alias MinstdRand = LinearCongruentialEngine!(uint, 48271, 0, 2147483647);
 
 unittest
 {
@@ -1016,13 +1016,13 @@ struct XorshiftEngine(UIntType, UIntType bits, UIntType a, UIntType b, UIntType 
  * num = rnd.front; // different across runs
  * -----
  */
-alias XorshiftEngine!(uint, 32,  13, 17, 15)  Xorshift32;
-alias XorshiftEngine!(uint, 64,  10, 13, 10) Xorshift64;   /// ditto
-alias XorshiftEngine!(uint, 96,  10, 5,  26) Xorshift96;   /// ditto
-alias XorshiftEngine!(uint, 128, 11, 8,  19) Xorshift128;  /// ditto
-alias XorshiftEngine!(uint, 160, 2,  1,  4)  Xorshift160;  /// ditto
-alias XorshiftEngine!(uint, 192, 2,  1,  4)  Xorshift192;  /// ditto
-alias Xorshift128 Xorshift;                                /// ditto
+alias Xorshift32  = XorshiftEngine!(uint, 32,  13, 17, 15) ;
+alias Xorshift64  = XorshiftEngine!(uint, 64,  10, 13, 10); /// ditto
+alias Xorshift96  = XorshiftEngine!(uint, 96,  10, 5,  26); /// ditto
+alias Xorshift128 = XorshiftEngine!(uint, 128, 11, 8,  19); /// ditto
+alias Xorshift160 = XorshiftEngine!(uint, 160, 2,  1,  4);  /// ditto
+alias Xorshift192 = XorshiftEngine!(uint, 192, 2,  1,  4);  /// ditto
+alias Xorshift    = Xorshift128;                            /// ditto
 
 
 unittest
@@ -1043,7 +1043,7 @@ unittest
         [0UL, 246875399, 3690007200, 1264581005, 3906711041, 1866187943, 2481925219, 2464530826, 1604040631, 3653403911]
     ];
 
-    alias TypeTuple!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192) XorshiftTypes;
+    alias XorshiftTypes = TypeTuple!(Xorshift32, Xorshift64, Xorshift96, Xorshift128, Xorshift160, Xorshift192);
 
     foreach (I, Type; XorshiftTypes)
     {
@@ -1143,7 +1143,7 @@ nice random numbers, and (2) you don't care for the minutiae of the
 method being used.
  */
 
-alias Mt19937 Random;
+alias Random = Mt19937;
 
 unittest
 {
@@ -1231,9 +1231,9 @@ unittest
 auto uniform(string boundaries = "[)",
         T1, T2, UniformRandomNumberGenerator)
 (T1 a, T2 b, ref UniformRandomNumberGenerator urng)
-if (isFloatingPoint!(CommonType!(T1, T2)))
+if (isFloatingPoint!(CommonType!(T1, T2)) && isUniformRNG!UniformRandomNumberGenerator)
 {
-    alias Unqual!(CommonType!(T1, T2)) NumberType;
+    alias NumberType = Unqual!(CommonType!(T1, T2));
     static if (boundaries[0] == '(')
     {
         NumberType _a = nextafter(cast(NumberType) a, NumberType.infinity);
@@ -1325,7 +1325,8 @@ Hence, our condition to reroll is
 +/
 auto uniform(string boundaries = "[)", T1, T2, RandomGen)
 (T1 a, T2 b, ref RandomGen rng)
-if (isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2)))
+if ((isIntegral!(CommonType!(T1, T2)) || isSomeChar!(CommonType!(T1, T2))) &&
+     isUniformRNG!RandomGen)
 {
     alias ResultType = Unqual!(CommonType!(T1, T2));
     static if (boundaries[0] == '(')
@@ -1475,7 +1476,7 @@ passed, uses the default $(D rndGen).
  */
 auto uniform(T, UniformRandomNumberGenerator)
 (ref UniformRandomNumberGenerator urng)
-if (!is(T == enum) && (isIntegral!T || isSomeChar!T))
+if (!is(T == enum) && (isIntegral!T || isSomeChar!T) && isUniformRNG!UniformRandomNumberGenerator)
 {
     auto r = urng.front;
     urng.popFront();
@@ -1517,7 +1518,7 @@ generator is passed, uses the default $(D rndGen).
  */
 auto uniform(E, UniformRandomNumberGenerator)
 (ref UniformRandomNumberGenerator urng)
-if (is(E == enum))
+if (is(E == enum) && isUniformRNG!UniformRandomNumberGenerator)
 {
     static immutable E[EnumMembers!E.length] members = [EnumMembers!E];
     return members[std.random.uniform(0, members.length, urng)];
@@ -1528,6 +1529,13 @@ auto uniform(E)()
 if (is(E == enum))
 {
     return uniform!E(rndGen);
+}
+
+///
+unittest
+{
+    enum Fruit { apple, mango, pear }
+    auto randFruit = uniform!Fruit();
 }
 
 unittest
@@ -2267,10 +2275,12 @@ Variable names are chosen to match those in Vitter's paper.
             while (true)
             {
                 // Step D2: set values of x and u.
-                for (x = _available * (1-_Vprime), s = cast(size_t) trunc(x);
-                     s >= qu1;
-                     x = _available * (1-_Vprime), s = cast(size_t) trunc(x))
+                while(1)
                 {
+                    x = _available * (1-_Vprime);
+                    s = cast(size_t) trunc(x);
+                    if (s < qu1)
+                        break;
                     _Vprime = newVprime(_toSelect);
                 }
 

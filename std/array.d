@@ -28,7 +28,7 @@ a special case in an overload.
 ForeachType!Range[] array(Range)(Range r)
 if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)
 {
-    alias ForeachType!Range E;
+    alias E = ForeachType!Range;
     static if (hasLength!Range)
     {
         if(r.length == 0) return null;
@@ -40,13 +40,9 @@ if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)
         auto result = trustedAllocateArray(r.length);
 
         size_t i;
-        static auto trustedGetAddr(T)(ref T t) @trusted nothrow pure
-        {
-            return &t;
-        }
         foreach (e; r)
         {
-            emplace(trustedGetAddr(result[i]), e);
+            emplaceRef(result[i], e);
             ++i;
         }
         return cast(E[])result;
@@ -243,8 +239,8 @@ auto assocArray(Range)(Range r)
     if (isInputRange!Range && isTuple!(ElementType!Range) &&
         ElementType!Range.length == 2)
 {
-    alias ElementType!Range.Types[0] KeyType;
-    alias ElementType!Range.Types[1] ValueType;
+    alias KeyType = ElementType!Range.Types[0];
+    alias ValueType = ElementType!Range.Types[1];
     ValueType[KeyType] aa;
     foreach (t; r)
         aa[t[0]] = t[1];
@@ -306,21 +302,32 @@ version(unittest)
     static assert(nDimensions!(float[][]) == 2);
 }
 
-/**
+/++
 Returns a new array of type $(D T) allocated on the garbage collected heap
 without initializing its elements.  This can be a useful optimization if every
 element will be immediately initialized.  $(D T) may be a multidimensional
-array.  In this case sizes may be specified for any number of dimensions from 1
+array.  In this case sizes may be specified for any number of dimensions from 0
 to the number in $(D T).
-*/
-auto uninitializedArray(T, I...)(I sizes)
-if(allSatisfy!(isIntegral, I))
-{
-    return arrayAllocImpl!(false, T, I)(sizes);
-}
 
+uninitializedArray is nothrow and weakly pure.
++/
+auto uninitializedArray(T, I...)(I sizes) nothrow @trusted
+if (isDynamicArray!T && allSatisfy!(isIntegral, I))
+{
+    enum isSize_t(E) = is (E : size_t);
+    alias toSize_t(E) = size_t;
+
+    static assert(allSatisfy!(isSize_t, I),
+        format("Argument types in %s are not all convertible to size_t: %s",
+        I.stringof, Filter!(templateNot!(isSize_t), I).stringof));
+
+    //Eagerlly transform non-size_t into size_t to avoid template bloat
+    alias ST = staticMap!(toSize_t, I);
+
+    return arrayAllocImpl!(false, T, ST)(sizes);
+}
 ///
-unittest
+nothrow pure unittest
 {
     double[] arr = uninitializedArray!(double[])(100);
     assert(arr.length == 100);
@@ -330,19 +337,34 @@ unittest
     assert(matrix[0].length == 31);
 }
 
-/**
+/++
 Returns a new array of type $(D T) allocated on the garbage collected heap.
-Initialization is guaranteed only for pointers, references and slices,
-for preservation of memory safety.
-*/
-auto minimallyInitializedArray(T, I...)(I sizes) @trusted
-if(allSatisfy!(isIntegral, I))
+
+Partial initialization is done for types with indirections, for preservation
+of memory safety. Note that elements will only be initialized to 0, but not
+necessarily the element type's $(D .init).
+
+minimallyInitializedArray is nothrow and weakly pure.
++/
+auto minimallyInitializedArray(T, I...)(I sizes) nothrow @trusted
+if (isDynamicArray!T && allSatisfy!(isIntegral, I))
 {
-    return arrayAllocImpl!(true, T, I)(sizes);
+    enum isSize_t(E) = is (E : size_t);
+    alias toSize_t(E) = size_t;
+
+    static assert(allSatisfy!(isSize_t, I),
+        format("Argument types in %s are not all convertible to size_t: %s",
+        I.stringof, Filter!(templateNot!(isSize_t), I).stringof));
+
+    //Eagerlly transform non-size_t into size_t to avoid template bloat
+    alias ST = staticMap!(toSize_t, I);
+
+    return arrayAllocImpl!(true, T, ST)(sizes);
 }
 
-@safe unittest
+@safe nothrow pure unittest
 {
+    minimallyInitializedArray!(int[][][][][])();
     double[] arr = minimallyInitializedArray!(double[])(100);
     assert(arr.length == 100);
 
@@ -354,48 +376,128 @@ if(allSatisfy!(isIntegral, I))
     }
 }
 
-private auto arrayAllocImpl(bool minimallyInitialized, T, I...)(I sizes)
-if(allSatisfy!(isIntegral, I))
+private auto arrayAllocImpl(bool minimallyInitialized, T, I...)(I sizes) nothrow
 {
-    static assert(sizes.length >= 1,
-        "Cannot allocate an array without the size of at least the first " ~
-        " dimension.");
-    static assert(sizes.length <= nDimensions!T,
-        to!string(sizes.length) ~ " dimensions specified for a " ~
-        to!string(nDimensions!T) ~ " dimensional array.");
+    static assert(I.length <= nDimensions!T,
+        format("%s dimensions specified for a %s dimensional array.", I.length, nDimensions!T));
 
-    alias typeof(T.init[0]) E;
+    alias E = ElementEncodingType!T;
 
-    auto ptr = (__ctfe) ?
+    E[] ret;
+
+    static if (I.length != 0)
+    {
+        static assert (is(I[0] == size_t));
+        alias size = sizes[0];
+    }
+
+    static if (I.length == 1)
+    {
+        if (__ctfe)
         {
-            static if(__traits(compiles, new E[1]))
+            static if (__traits(compiles, new E[](size)))
+                ret = new E[](size);
+            else static if (__traits(compiles, ret ~= E.init))
             {
-                return (new E[sizes[0]]).ptr;
+                try
+                {
+                    //Issue: if E has an impure postblit, then all of arrayAllocImpl
+                    //Will be impure, even during non CTFE.
+                    foreach (i; 0 .. size)
+                        ret ~= E.init;
+                }
+                catch (Exception e)
+                    throw new Error(e.msg);
             }
             else
-            {
-                E[] arr;
-                foreach (i; 0 .. sizes[0])
-                    arr ~= E.init;
-                return arr.ptr;
-            }
-        }() :
-        cast(E*) GC.malloc(sizes[0] * E.sizeof, blockAttribute!(E));
-    auto ret = ptr[0..sizes[0]];
-
-    static if(sizes.length > 1)
-    {
-        foreach(ref elem; ret)
+                assert(0, "No postblit nor default init on " ~ E.stringof ~
+                    ": At least one is required for CTFE.");
+        }
+        else
         {
-            elem = uninitializedArray!(E)(sizes[1..$]);
+            import core.stdc.string : memset;
+            auto ptr = cast(E*) GC.malloc(sizes[0] * E.sizeof, blockAttribute!E);
+            static if (minimallyInitialized && hasIndirections!E)
+                memset(ptr, 0, size * E.sizeof);
+            ret = ptr[0 .. size];
         }
     }
-    else static if(minimallyInitialized && hasIndirections!E)
+    else static if (I.length > 1)
     {
-        ret[] = E.init;
+        ret = arrayAllocImpl!(false, E[])(size);
+        foreach(ref elem; ret)
+            elem = arrayAllocImpl!(minimallyInitialized, E)(sizes[1..$]);
     }
 
     return ret;
+}
+
+nothrow pure unittest
+{
+    auto s1 = uninitializedArray!(int[])();
+    auto s2 = minimallyInitializedArray!(int[])();
+    assert(s1.length == 0);
+    assert(s2.length == 0);
+}
+
+nothrow pure unittest //@@@9803@@@
+{
+    auto a = minimallyInitializedArray!(int*[])(1);
+    assert(a[0] == null);
+    auto b = minimallyInitializedArray!(int[][])(1);
+    assert(b[0].empty);
+    auto c = minimallyInitializedArray!(int*[][])(1, 1);
+    assert(c[0][0] == null);
+}
+
+unittest //@@@10637@@@
+{
+    static struct S
+    {
+        static struct I{int i; alias i this;}
+        int* p;
+        this() @disable;
+        this(int i)
+        {
+            p = &(new I(i)).i;
+        }
+        this(this)
+        {
+            p = &(new I(*p)).i;
+        }
+        ~this()
+        {
+            assert(p != null);
+        }
+    }
+    auto a = minimallyInitializedArray!(S[])(1);
+    assert(a[0].p == null);
+    enum b = minimallyInitializedArray!(S[])(1);
+}
+
+nothrow unittest
+{
+    static struct S1
+    {
+        this() @disable;
+        this(this) @disable;
+    }
+    auto a1 = minimallyInitializedArray!(S1[][])(2, 2);
+    //enum b1 = minimallyInitializedArray!(S1[][])(2, 2);
+    static struct S2
+    {
+        this() @disable;
+        //this(this) @disable;
+    }
+    auto a2 = minimallyInitializedArray!(S2[][])(2, 2);
+    enum b2 = minimallyInitializedArray!(S2[][])(2, 2);
+    static struct S3
+    {
+        //this() @disable;
+        this(this) @disable;
+    }
+    auto a3 = minimallyInitializedArray!(S3[][])(2, 2);
+    enum b3 = minimallyInitializedArray!(S3[][])(2, 2);
 }
 
 /**
@@ -693,7 +795,7 @@ slice, returns that slice. Otherwise, returns the null slice.
 */
 inout(T)[] overlap(T)(inout(T)[] r1, inout(T)[] r2) @trusted pure nothrow
 {
-    alias inout(T) U;
+    alias U = inout(T);
     static U* max(U* a, U* b) nothrow { return a > b ? a : b; }
     static U* min(U* a, U* b) nothrow { return a < b ? a : b; }
 
@@ -910,19 +1012,6 @@ void insertInPlace(T, U...)(ref T[] array, size_t pos, U stuff)
     static if(allSatisfy!(isInputRangeWithLengthOrConvertible!T, U))
     {
         import core.stdc.string;
-        void assign(E)(ref T dest, ref E src)
-        {
-            static if (is(typeof(dest.opAssign(src))) ||
-                       !is(typeof(dest = src)))
-            {
-                // this should be in-place construction
-                emplace(&dest, src);
-            }
-            else
-            {
-                dest = src;
-            }
-        }
         auto trustedAllocateArray(size_t n) @trusted nothrow
         {
             return uninitializedArray!(T[])(n);
@@ -953,13 +1042,13 @@ void insertInPlace(T, U...)(ref T[] array, size_t pos, U stuff)
         {
             static if (is(E : T)) //ditto
             {
-                assign(tmp[j++], stuff[i]);
+                emplaceRef(tmp[j++], stuff[i]);
             }
             else
             {
                 foreach (v; stuff[i])
                 {
-                    assign(tmp[j++], v);
+                    emplaceRef(tmp[j++], v);
                 }
             }
         }
@@ -1303,7 +1392,7 @@ returns a new array. For a lazy version, refer to $(XREF range, repeat).
  */
 ElementEncodingType!S[] replicate(S)(S s, size_t n) if (isDynamicArray!S)
 {
-    alias ElementEncodingType!S[] RetType;
+    alias RetType = ElementEncodingType!S[];
 
     // Optimization for return join(std.range.repeat(s, n));
     if (n == 0)
@@ -1525,12 +1614,12 @@ unittest
   +/
 ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
     if(isInputRange!RoR &&
-       isInputRange!(ElementType!RoR) &&
+       isInputRange!(Unqual!(ElementType!RoR)) &&
        isInputRange!R &&
        is(Unqual!(ElementType!(ElementType!RoR)) == Unqual!(ElementType!R)))
 {
-    alias ElementType!RoR RoRElem;
-    alias typeof(return) RetType;
+    alias RoRElem = ElementType!RoR;
+    alias RetType = typeof(return);
 
     if (ror.empty)
         return RetType.init;
@@ -1544,7 +1633,7 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
     else static if (!isArray!R)
         auto sepArr = array(sep);
     else
-        alias sep sepArr;
+        alias sepArr = sep;
 
     auto result = appender!RetType();
     static if(isForwardRange!RoR &&
@@ -1572,14 +1661,14 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR, R)(RoR ror, R sep)
 /// Ditto
 ElementEncodingType!(ElementType!RoR)[] join(RoR)(RoR ror)
     if(isInputRange!RoR &&
-       isInputRange!(ElementType!RoR))
+       isInputRange!(Unqual!(ElementType!RoR)))
 {
-    alias typeof(return) RetType;
+    alias RetType = typeof(return);
 
     if (ror.empty)
         return RetType.init;
 
-    alias ElementType!RoR R;
+    alias R = ElementType!RoR;
     auto result = appender!RetType();
     static if(isForwardRange!RoR && (hasLength!R || isNarrowString!R))
     {
@@ -1601,6 +1690,10 @@ ElementEncodingType!(ElementType!RoR)[] join(RoR)(RoR ror)
 
     assert(join([[1, 2, 3], [4, 5]], [72, 73]) == [1, 2, 3, 72, 73, 4, 5]);
     assert(join([[1, 2, 3], [4, 5]]) == [1, 2, 3, 4, 5]);
+
+    const string[] arr = ["apple", "banana"];
+    assert(arr.join(",") == "apple,banana");
+    assert(arr.join() == "applebanana");
 }
 
 unittest
@@ -1692,7 +1785,7 @@ unittest
     assert(join([[1, 2], [41, 42]]) == [1, 2, 41, 42]);
     assert(join(cast(int[][])[]).empty);
 
-    alias filter!"true" f;
+    alias f = filter!"true";
     assert(join([[1, 2], [41, 42]],          [5, 6]) == [1, 2, 5, 6, 41, 42]);
     assert(join(f([[1, 2], [41, 42]]),       [5, 6]) == [1, 2, 5, 6, 41, 42]);
     assert(join([f([1, 2]), f([41, 42])],    [5, 6]) == [1, 2, 5, 6, 41, 42]);
@@ -1792,7 +1885,7 @@ unittest
     }
     foreach (S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[]))
     {
-        alias ElementEncodingType!S Char;
+        alias Char = ElementEncodingType!S;
         S s = to!S("yet another dummy text, yet another ...");
         S from = to!S("yet another");
         S into = to!S("some");
@@ -2068,7 +2161,7 @@ unittest
     foreach(S; TypeTuple!(string, wstring, dstring, char[], wchar[], dchar[],
                           const(char[]), immutable(char[])))
     {
-        alias Unqual!S T;
+        alias T = Unqual!S;
 
         auto s = to!S("This is a foo foo list");
         auto from = to!T("foo");
@@ -2329,18 +2422,7 @@ struct Appender(A : T[], T)
             else
                 auto ref uitem() @trusted nothrow @property { return cast(Unqual!T)item;}
 
-            //The idea is to only call emplace if we must.
-            static if ( is(typeof(bigData[0].opAssign(uitem))) ||
-                       !is(typeof(bigData[0] = uitem)))
-            {
-                //pragma(msg, T.stringof); pragma(msg, U.stringof);
-                emplace(&bigData[len], uitem);
-            }
-            else
-            {
-                //pragma(msg, T.stringof); pragma(msg, U.stringof);
-                bigData[len] = uitem;
-            }
+            emplaceRef(bigData[len], uitem);
 
             //We do this at the end, in case of exceptions
             _data.arr = bigData;
@@ -2350,7 +2432,7 @@ struct Appender(A : T[], T)
     // Const fixing hack.
     void put(Range)(Range items) if (canPutConstRange!Range)
     {
-        alias put!(Unqual!Range) p;
+        alias p = put!(Unqual!Range);
         p(items);
     }
 
@@ -2397,10 +2479,7 @@ struct Appender(A : T[], T)
             {
                 foreach (ref it ; bigData[len .. newlen])
                 {
-                    static if (mustEmplace)
-                        emplace(&it, items.front);
-                    else
-                        it = items.front;
+                    emplaceRef(it, items.front);
                     items.popFront();
                 }
             }
@@ -2409,10 +2488,7 @@ struct Appender(A : T[], T)
                 static auto ref getUItem(U)(U item) @trusted {return cast(Unqual!T)item;}
                 foreach (ref it ; bigData[len .. newlen])
                 {
-                    static if (mustEmplace)
-                        emplace(&it, getUItem(items.front));
-                    else
-                        it = getUItem(items.front);
+                    emplaceRef(it, getUItem(items.front));
                     items.popFront();
                 }
             }
@@ -2542,7 +2618,7 @@ struct RefAppender(A : T[], T)
         mixin("return impl." ~ fn ~ "(args);");
     }
 
-    private alias Appender!(A, T) AppenderType;
+    private alias AppenderType = Appender!(A, T);
 
     /**
      * Appends one item to the managed array.

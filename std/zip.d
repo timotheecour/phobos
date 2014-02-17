@@ -239,7 +239,7 @@ final class ArchiveMember
     {
         printf("name = '%.*s'\n", name.length, name.ptr);
         printf("\tcomment = '%.*s'\n", comment.length, comment.ptr);
-        printf("\tmadeVersion = x%04x\n", madeVersion);
+        printf("\tmadeVersion = x%04x\n", _madeVersion);
         printf("\textractVersion = x%04x\n", extractVersion);
         printf("\tflags = x%04x\n", flags);
         printf("\tcompressionMethod = %d\n", compressionMethod);
@@ -418,7 +418,7 @@ final class ZipArchive
         foreach (ArchiveMember de; _directory)
         {
             _data[i .. i + 4] = cast(ubyte[])"PK\x01\x02";
-            putUshort(i + 4,  de.madeVersion);
+            putUshort(i + 4,  de._madeVersion);
             putUshort(i + 6,  de.extractVersion);
             putUshort(i + 8,  de.flags);
             putUshort(i + 10, de._compressionMethod);
@@ -572,6 +572,11 @@ final class ZipArchive
             de.comment = cast(string)(_data[i .. i + commentlen]);
             i += commentlen;
 
+            immutable uint dataOffset = de.offset + 30 + namelen + extralen;
+            if (dataOffset + de.compressedSize > endrecOffset)
+                throw new ZipException("Invalid directory entry offset or size.");
+            de._compressedData = _data[dataOffset .. dataOffset + de.compressedSize];
+
             _directory[de.name] = de;
 
         }
@@ -689,10 +694,13 @@ unittest
     am1.name = "foo";
     am1.expandedData = new ubyte[](1024);
     zip1.addMember(am1);
-    zip1.build();
+    auto data1 = zip1.build();
     zip2.addMember(zip1.directory["foo"]);
     zip2.build();
     auto am2 = zip2.directory["foo"];
     zip2.expand(am2);
     assert(am1.expandedData == am2.expandedData);
+    auto zip3 = new ZipArchive(data1);
+    zip3.build();
+    assert(zip3.directory["foo"].compressedSize == am1.compressedSize);
 }

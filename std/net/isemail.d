@@ -67,7 +67,7 @@ import std.uni;
 EmailStatus isEmail (Char) (const(Char)[] email, CheckDns checkDNS = CheckDns.no,
     EmailStatusCode errorLevel = EmailStatusCode.none) if (isSomeChar!(Char))
 {
-    alias const(Char)[] tstring;
+    alias tstring = const(Char)[];
 
     enum defaultThreshold = 16;
     int threshold;
@@ -282,7 +282,7 @@ EmailStatus isEmail (Char) (const(Char)[] email, CheckDns checkDNS = CheckDns.no
                         }
 
                         endOrDie = false;
-                        elementLength = 0,
+                        elementLength = 0;
                         elementCount++;
 
                         //atomList[EmailPart.componentDomain][elementCount] = "";

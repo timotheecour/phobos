@@ -572,7 +572,7 @@ uint formattedRead(R, Char, S...)(ref R r, const(Char)[] fmt, S args)
             // Input is empty, nothing to read
             return 0;
         }
-        alias typeof(*args[0]) A;
+        alias A = typeof(*args[0]);
         static if (isTuple!A)
         {
             foreach (i, T; A.Types)
@@ -604,7 +604,7 @@ unittest
 template FormatSpec(Char)
     if (!is(Unqual!Char == Char))
 {
-    alias FormatSpec!(Unqual!Char) FormatSpec;
+    alias FormatSpec = FormatSpec!(Unqual!Char);
 }
 
 /**
@@ -912,7 +912,7 @@ struct FormatSpec(Char)
                 else
                 {
                     nested = to!(typeof(nested))(trailing[i + 1 .. j - 1]);
-                    sep = null;
+                    sep = null; // use null (issue 12135)
                 }
                 //this = FormatSpec(innerTrailingSpec);
                 spec = '(';
@@ -1097,7 +1097,10 @@ struct FormatSpec(Char)
 
         put(w, '%');
         if (indexStart != 0)
-            formatValue(w, indexStart, f), put(w, '$');
+        {
+            formatValue(w, indexStart, f);
+            put(w, '$');
+        }
         if (flDash)  put(w, '-');
         if (flZero)  put(w, '0');
         if (flSpace) put(w, ' ');
@@ -1106,7 +1109,10 @@ struct FormatSpec(Char)
         if (width != 0)
             formatValue(w, width, f);
         if (precision != FormatSpec!Char.UNSPECIFIED)
-            put(w, '.'), formatValue(w, precision, f);
+        {
+            put(w, '.');
+            formatValue(w, precision, f);
+        }
         put(w, spec);
         return w.data;
     }
@@ -1905,7 +1911,7 @@ if (is(DynamicArrayTypeOf!T) && !is(StringTypeOf!T) && !is(T == enum) && !hasToS
     }
     else static if (!isInputRange!T)
     {
-        alias Unqual!(ArrayTypeOf!T) U;
+        alias U = Unqual!(ArrayTypeOf!T);
         static assert(isInputRange!U);
         U val = obj;
         formatValue(w, val, f);
@@ -2264,7 +2270,10 @@ private void formatChar(Writer)(Writer w, in dchar c, in char quote)
     if (std.uni.isGraphical(c))
     {
         if (c == quote || c == '\\')
-            put(w, '\\'), put(w, c);
+        {
+            put(w, '\\');
+            put(w, c);
+        }
         else
             put(w, c);
     }
@@ -2327,17 +2336,17 @@ if (is(StringTypeOf!T) && !is(T == enum))
         static if (is(typeof(str[0]) : const(char)))
         {
             enum postfix = 'c';
-            alias const(ubyte)[] IntArr;
+            alias IntArr = const(ubyte)[];
         }
         else static if (is(typeof(str[0]) : const(wchar)))
         {
             enum postfix = 'w';
-            alias const(ushort)[] IntArr;
+            alias IntArr = const(ushort)[];
         }
         else static if (is(typeof(str[0]) : const(dchar)))
         {
             enum postfix = 'd';
-            alias const(uint)[] IntArr;
+            alias IntArr = const(uint)[];
         }
         formattedWrite(w, "x\"%(%02X %)\"%s", cast(IntArr)str, postfix);
     }
@@ -2419,7 +2428,7 @@ if (is(AssocArrayTypeOf!T) && !is(T == enum) && !hasToString!(T, Char))
             fmt.writeUpToNextSpec(w);
             formatElement(w, v, fmt);
         }
-        if (f.sep.length)
+        if (f.sep !is null)
         {
             fmt.writeUpToNextSpec(w);
             if (++i != end)
@@ -2456,6 +2465,10 @@ unittest
     // use range formatting for key and value, and use %|
     formatTest( "{%([%04d->%(%c.%)]%| $ %)}", aa3,
                [`{[0001->h.e.l.l.o] $ [0002->w.o.r.l.d]}`, `{[0002->w.o.r.l.d] $ [0001->h.e.l.l.o]}`] );
+
+    // issue 12135
+    formatTest("%(%s:<%s>%|,%)", [1:2], "1:<2>");
+    formatTest("%(%s:<%s>%|%)" , [1:2], "1:<2>");
 }
 
 unittest
@@ -3702,8 +3715,9 @@ unittest
     // }
 
     auto stream = appender!(char[])();
-    alias TypeTuple!(byte, ubyte, short, ushort, int, uint, long, ulong,
-            float, double, real) AllNumerics;
+    alias AllNumerics =
+        TypeTuple!(byte, ubyte, short, ushort, int, uint, long, ulong,
+                   float, double, real);
     foreach (T; AllNumerics)
     {
         T value = 1;
@@ -3745,8 +3759,8 @@ void formatReflectTest(T)(ref T val, string fmt, string formatted, string fn = _
     static if (isAssociativeArray!T)
     if (__ctfe)
     {
-        alias val aa1;
-        alias val2 aa2;
+        alias aa1 = val;
+        alias aa2 = val2;
         //assert(aa1 == aa2);
 
         assert(aa1.length == aa2.length);
@@ -3792,8 +3806,8 @@ void formatReflectTest(T)(ref T val, string fmt, string[] formatted, string fn =
     static if (isAssociativeArray!T)
     if (__ctfe)
     {
-        alias val aa1;
-        alias val2 aa2;
+        alias aa1 = val;
+        alias aa2 = val2;
         //assert(aa1 == aa2);
 
         assert(aa1.length == aa2.length);
@@ -4413,8 +4427,9 @@ body
                 enforce(i <= T.length);
             }
 
-            auto sep =
-                spec.sep ? fmt.readUpToNextSpec(input), spec.sep
+            if (spec.sep)
+                fmt.readUpToNextSpec(input);
+            auto sep = spec.sep ? spec.sep
                          : fmt.trailing;
             debug (unformatRange) {
             if (!sep.empty && !input.empty) printf("-> %c, sep = %.*s\n", input.front, sep);
