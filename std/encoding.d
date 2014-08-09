@@ -1242,8 +1242,8 @@ Returns true if c is a valid code point
  since these are valid code points (even though they are not valid
  characters).
 
- Supercedes:
- This function supercedes $(D std.utf.startsValidDchar()).
+ Supersedes:
+ This function supersedes $(D std.utf.startsValidDchar()).
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1284,7 +1284,7 @@ unittest
 }
 
 /**
- Returns true iff it is possible to represent the specifed codepoint
+ Returns true iff it is possible to represent the specified codepoint
  in the encoding.
 
  The type of encoding cannot be deduced. Therefore, it is necessary to
@@ -1341,10 +1341,10 @@ unittest
 /**
  Returns true if the string is encoded correctly
 
- Supercedes:
- This function supercedes std.utf.validate(), however note that this
+ Supersedes:
+ This function supersedes std.utf.validate(), however note that this
  function returns a bool indicating whether the input was valid or not,
- wheras the older funtion would throw an exception.
+ whereas the older function would throw an exception.
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1507,8 +1507,8 @@ unittest
  The input to this function MUST be validly encoded.
  This is enforced by the function's in-contract.
 
- Supercedes:
- This function supercedes std.utf.toUTFindex().
+ Supersedes:
+ This function supersedes std.utf.toUTFindex().
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1543,9 +1543,9 @@ unittest
  The input to this function MUST be validly encoded.
  This is enforced by the function's in-contract.
 
- Supercedes:
- This function supercedes std.utf.decode(), however, note that the
- function codePoints() supercedes it more conveniently.
+ Supersedes:
+ This function supersedes std.utf.decode(), however, note that the
+ function codePoints() supersedes it more conveniently.
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1650,9 +1650,9 @@ body
  The type of the output cannot be deduced. Therefore, it is necessary to
  explicitly specify the encoding as a template parameter.
 
- Supercedes:
- This function supercedes std.utf.encode(), however, note that the
- function codeUnits() supercedes it more conveniently.
+ Supersedes:
+ This function supersedes std.utf.encode(), however, note that the
+ function codeUnits() supersedes it more conveniently.
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1682,9 +1682,9 @@ body
  The type of the output cannot be deduced. Therefore, it is necessary to
  explicitly specify the encoding as a template parameter.
 
- Supercedes:
- This function supercedes std.utf.encode(), however, note that the
- function codeUnits() supercedes it more conveniently.
+ Supersedes:
+ This function supersedes std.utf.encode(), however, note that the
+ function codeUnits() supersedes it more conveniently.
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1719,9 +1719,9 @@ body
 //  * The type of the output cannot be deduced. Therefore, it is necessary to
 //  * explicitly specify the encoding as a template parameter.
 //  *
-//  * Supercedes:
-//  * This function supercedes std.utf.encode(), however, note that the
-//  * function codeUnits() supercedes it more conveniently.
+//  * Supersedes:
+//  * This function supersedes std.utf.encode(), however, note that the
+//  * function codeUnits() supersedes it more conveniently.
 //  *
 //  * Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 //  *
@@ -1820,9 +1820,9 @@ unittest
  The type of the output cannot be deduced. Therefore, it is necessary to
  explicitly specify the encoding as a template parameter.
 
- Supercedes:
- This function supercedes std.utf.encode(), however, note that the
- function codeUnits() supercedes it more conveniently.
+ Supersedes:
+ This function supersedes std.utf.encode(), however, note that the
+ function codeUnits() supersedes it more conveniently.
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1852,8 +1852,8 @@ body
  at each iteration with the offset into the string at which the code point
  begins.
 
- Supercedes:
- This function supercedes std.utf.decode().
+ Supersedes:
+ This function supersedes std.utf.decode().
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1903,8 +1903,8 @@ unittest
  The type of the output cannot be deduced. Therefore, it is necessary to
  explicitly specify the encoding type in the template parameter.
 
- Supercedes:
- This function supercedes std.utf.encode().
+ Supersedes:
+ This function supersedes std.utf.encode().
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -1968,10 +1968,10 @@ size_t encode(Tgt, Src, R)(in Src[] s, R range)
  The input to this function MUST be validly encoded.
  This is enforced by the function's in-contract.
 
- Supercedes:
- This function supercedes std.utf.toUTF8(), std.utf.toUTF16() and
+ Supersedes:
+ This function supersedes std.utf.toUTF8(), std.utf.toUTF16() and
  std.utf.toUTF32()
- (but note that to!() supercedes it more conveniently).
+ (but note that to!() supersedes it more conveniently).
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
 
@@ -2083,8 +2083,8 @@ unittest
  The input to this function MUST be validly encoded.
  This is enforced by the function's in-contract.
 
- Supercedes:
- This function supercedes std.utf.toUTF8(), std.utf.toUTF16() and
+ Supersedes:
+ This function supersedes std.utf.toUTF8(), std.utf.toUTF16() and
  std.utf.toUTF32().
 
  Standards: Unicode 5.0, ASCII, ISO-8859-1, WINDOWS-1252
@@ -2787,7 +2787,7 @@ class EncodingSchemeUtf16Native : EncodingScheme
         {
             auto t = cast(const(wchar)[]) s;
             dchar c = std.encoding.decode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * wchar.sizeof..$];
             return c;
         }
 
@@ -2800,7 +2800,7 @@ class EncodingSchemeUtf16Native : EncodingScheme
         {
             auto t = cast(const(wchar)[]) s;
             dchar c = std.encoding.safeDecode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * wchar.sizeof..$];
             return c;
         }
 
@@ -2809,6 +2809,23 @@ class EncodingSchemeUtf16Native : EncodingScheme
             return cast(immutable(ubyte)[])"\uFFFD"w;
         }
     }
+}
+unittest
+{
+    version(LittleEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-16le");
+        ubyte[6] sample = [154,1, 155,1, 156,1];
+    }
+    version(BigEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-16be");
+        ubyte[6] sample = [1,154, 1,155, 1,156];
+    }
+    const(ubyte)[] ub = cast(const(ubyte)[])sample;
+    dchar dc = efrom.safeDecode(ub);
+    assert(dc == 410);
+    assert(ub.length == 4);
 }
 
 /**
@@ -2865,7 +2882,7 @@ class EncodingSchemeUtf32Native : EncodingScheme
         {
             auto t = cast(const(dchar)[]) s;
             dchar c = std.encoding.decode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * dchar.sizeof..$];
             return c;
         }
 
@@ -2878,7 +2895,7 @@ class EncodingSchemeUtf32Native : EncodingScheme
         {
             auto t = cast(const(dchar)[]) s;
             dchar c = std.encoding.safeDecode(t);
-            s = s[$-t.length..$];
+            s = s[$-t.length * dchar.sizeof..$];
             return c;
         }
 
@@ -2887,6 +2904,23 @@ class EncodingSchemeUtf32Native : EncodingScheme
             return cast(immutable(ubyte)[])"\uFFFD"d;
         }
     }
+}
+unittest
+{
+    version(LittleEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-32le");
+        ubyte[12] sample = [154,1,0,0, 155,1,0,0, 156,1,0,0];
+    }
+    version(BigEndian)
+    {
+        auto efrom = EncodingScheme.create("utf-32be");
+        ubyte[12] sample = [0,0,1,154, 0,0,1,155, 0,0,1,156];
+    }
+    const(ubyte)[] ub = cast(const(ubyte)[])sample;
+    dchar dc = efrom.safeDecode(ub);
+    assert(dc == 410);
+    assert(ub.length == 8);
 }
 
 //=============================================================================

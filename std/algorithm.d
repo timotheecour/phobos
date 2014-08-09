@@ -16,14 +16,14 @@ $(MYREF until) )
 )
 $(TR $(TDNW Comparison) $(TD $(MYREF among) $(MYREF cmp) $(MYREF equal) $(MYREF
 levenshteinDistance) $(MYREF levenshteinDistanceAndPath) $(MYREF max)
-$(MYREF min) $(MYREF mismatch) )
+$(MYREF min) $(MYREF mismatch) $(MYREF clamp) )
 )
 $(TR $(TDNW Iteration) $(TD $(MYREF filter) $(MYREF filterBidirectional)
 $(MYREF group) $(MYREF joiner) $(MYREF map) $(MYREF reduce) $(MYREF
-splitter) $(MYREF uniq) )
+splitter) $(MYREF sum) $(MYREF uniq) )
 )
 $(TR $(TDNW Sorting) $(TD $(MYREF completeSort) $(MYREF isPartitioned)
-$(MYREF isSorted) $(MYREF makeIndex) $(MYREF nextPermutation)
+$(MYREF isSorted) $(MYREF makeIndex) $(MYREF multiSort) $(MYREF nextPermutation)
 $(MYREF nextEvenPermutation) $(MYREF partialSort) $(MYREF
 partition) $(MYREF partition3) $(MYREF schwartzSort) $(MYREF sort)
 $(MYREF topN) $(MYREF topNCopy) )
@@ -36,7 +36,9 @@ setSymmetricDifference) $(MYREF setUnion) )
 $(TR $(TDNW Mutation) $(TD $(MYREF bringToFront) $(MYREF copy) $(MYREF
 fill) $(MYREF initializeAll) $(MYREF move) $(MYREF moveAll) $(MYREF
 moveSome) $(MYREF remove) $(MYREF reverse) $(MYREF strip) $(MYREF stripLeft)
-$(MYREF stripRight) $(MYREF swap) $(MYREF swapRanges) $(MYREF uninitializedFill) ))
+$(MYREF stripRight) $(MYREF swap) $(MYREF swapRanges) $(MYREF uninitializedFill) )
+)
+$(TR $(TDNW Utility) $(TD $(MYREF forward) ))
 )
 
 Implements algorithms oriented mainly towards processing of
@@ -183,6 +185,9 @@ $(TR $(TDNW $(LREF max)) $(TD $(D max(3, 4, 2)) returns $(D
 $(TR $(TDNW $(LREF min)) $(TD $(D min(3, 4, 2)) returns $(D
 2).)
 )
+$(TR $(TDNW $(LREF clamp)) $(TD $(D clamp(1, 3, 6)) returns $(D
+3). $(D clamp(4, 3, 6)) return $(D 4).)
+)
 $(TR $(TDNW $(LREF mismatch)) $(TD $(D mismatch("oh hi",
 "ohayo")) returns $(D tuple(" hi", "ayo")).)
 )
@@ -212,6 +217,9 @@ $(TR $(TDNW $(LREF reduce)) $(TD $(D reduce!"a + b"([1, 2, 3,
 )
 $(TR $(TDNW $(LREF splitter)) $(TD Lazily splits a range by a
 separator.)
+)
+$(TR $(TDNW $(LREF sum)) $(TD Same as $(D reduce), but specialized for
+accurate summation.)
 )
 $(TR $(TDNW $(LREF uniq)) $(TD Iterates over the unique elements
 in a range, which is assumed sorted.)
@@ -365,7 +373,7 @@ import std.functional : unaryFun, binaryFun;
 import std.range;
 import std.traits;
 import std.typecons : tuple, Tuple;
-import std.typetuple : TypeTuple, staticMap, allSatisfy;
+import std.typetuple : TypeTuple, staticMap, allSatisfy, anySatisfy;
 
 version(unittest)
 {
@@ -374,6 +382,15 @@ version(unittest)
 }
 
 private T* addressOf(T)(ref T val) { return &val; }
+
+// Same as std.string.format, but "self-importing".
+// Helps reduce code and imports, particularly in static asserts.
+// Also helps with missing imports errors.
+private template algoFormat()
+{
+    import std.string : format;
+    alias algoFormat = std.string.format;
+}
 
 /**
 $(D auto map(Range)(Range r) if (isInputRange!(Unqual!Range));)
@@ -557,9 +574,7 @@ private struct MapResult(alias fun, Range)
     {
         @property auto save()
         {
-            auto result = this;
-            result._input = result._input.save;
-            return result;
+            return typeof(this)(_input.save);
         }
     }
 }
@@ -714,10 +729,13 @@ unittest
     assert(equal(rr[0 .. 5], [1, 4, 9, 16, 0]));
 }
 
-/**
-$(D auto reduce(Args...)(Args args)
-    if (Args.length > 0 && Args.length <= 2 && isIterable!(Args[$ - 1]));)
+unittest
+{
+    struct S {int* p;}
+    auto m = immutable(S).init.repeat().map!"a".save;
+}
 
+/++
 Implements the homonym function (also known as $(D accumulate), $(D
 compress), $(D inject), or $(D foldl)) present in various programming
 languages of functional flavor. The call $(D reduce!(fun)(seed,
@@ -730,142 +748,124 @@ seed (the range must be non-empty).
 
 See also: $(LREF sum) is similar to $(D reduce!((a, b) => a + b)) that offers
 precise summing of floating point numbers.
- */
++/
 template reduce(fun...) if (fun.length >= 1)
 {
-    import std.exception : enforce;
+    alias binfuns = staticMap!(binaryFun, fun);
+    static if (fun.length > 1)
+        import std.typecons : tuple, isTuple;
 
-    auto reduce(Args...)(Args args)
-    if (Args.length > 0 && Args.length <= 2 && isIterable!(Args[$ - 1]))
+    /++
+    No-seed version. The first element of $(D r) is used as the seed's value.
+
+    For each function $(D f) in $(D fun), the corresponding
+    seed type $(D S) is $(D Unqual!(typeof(f(e, e)))), where $(D e) is an
+    element of $(D r): $(D ElementType!R) for ranges,
+    and $(D ForeachType!R) otherwise.
+
+    Once S has been determined, then $(D S s = e;) and $(D s = f(s, e);)
+    must both be legal.
+
+    If $(D r) is empty, an $(D Exception) is thrown.
+    +/
+    auto reduce(R)(R r)
+    if (isIterable!R)
     {
-        static if (isInputRange!(Args[$ - 1]))
-        {
-            static if (Args.length == 2)
-            {
-                alias seed = args[0];
-                alias r    = args[1];
-                Unqual!(Args[0]) result = seed;
-                for (; !r.empty; r.popFront())
-                {
-                    static if (fun.length == 1)
-                    {
-                        result = binaryFun!(fun[0])(result, r.front);
-                    }
-                    else
-                    {
-                        foreach (i, Unused; Args[0].Types)
-                        {
-                            result[i] = binaryFun!(fun[i])(result[i], r.front);
-                        }
-                    }
-                }
-                return result;
-            }
-            else
-            {
-                enforce(!args[$ - 1].empty,
-                    "Cannot reduce an empty range w/o an explicit seed value.");
-                alias r = args[0];
-                static if (fun.length == 1)
-                {
-                    auto seed = r.front;
-                    r.popFront();
-                    return reduce(seed, r);
-                }
-                else
-                {
-                    import std.functional : adjoin;
-                    import std.conv : emplaceRef;
+        import std.exception : enforce;
+        alias E = Select!(isInputRange!R, ElementType!R, ForeachType!R);
+        alias Args = staticMap!(ReduceSeedType!E, binfuns);
 
-                    static assert(fun.length > 1);
-                    Unqual!(typeof(r.front)) seed = r.front;
-                    typeof(adjoin!(staticMap!(binaryFun, fun))(seed, seed))
-                        result = void;
-                    foreach (i, T; result.Types)
-                    {
-                        emplaceRef(result[i], seed);
-                    }
-                    r.popFront();
-                    return reduce(result, r);
-                }
-            }
+        static if (isInputRange!R)
+        {
+            enforce(!r.empty);
+            Args result = r.front;
+            r.popFront();
+            return reduceImpl!false(r, result);
         }
         else
-        {   // opApply case.  Coded as a separate case because efficiently
-            // handling all of the small details like avoiding unnecessary
-            // copying, iterating by dchar over strings, and dealing with the
-            // no explicit start value case would become an unreadable mess
-            // if these were merged.
-            alias r = args[$ - 1];
-            alias R = Args[$ - 1];
-            alias E = ForeachType!R;
-
-            static if (args.length == 2)
-            {
-                static if (fun.length == 1)
-                {
-                    auto result = Tuple!(Unqual!(Args[0]))(args[0]);
-                }
-                else
-                {
-                    Unqual!(Args[0]) result = args[0];
-                }
-
-                enum bool initialized = true;
-            }
-            else static if (fun.length == 1)
-            {
-                Tuple!(typeof(binaryFun!fun(E.init, E.init))) result = void;
-                bool initialized = false;
-            }
-            else
-            {
-                import std.functional : adjoin;
-
-                typeof(adjoin!(staticMap!(binaryFun, fun))(E.init, E.init))
-                    result = void;
-                bool initialized = false;
-            }
-
-            // For now, just iterate using ref to avoid unnecessary copying.
-            // When Bug 2443 is fixed, this may need to change.
-            foreach (ref elem; r)
-            {
-                if (initialized)
-                {
-                    foreach (i, T; result.Types)
-                    {
-                        result[i] = binaryFun!(fun[i])(result[i], elem);
-                    }
-                }
-                else
-                {
-                    import std.conv : emplaceRef;
-
-                    static if (is(typeof(&initialized)))
-                    {
-                        initialized = true;
-                    }
-
-                    foreach (i, T; result.Types)
-                    {
-                        emplaceRef(result[i], elem);
-                    }
-                }
-            }
-
-            enforce(initialized,
-                "Cannot reduce an empty iterable w/o an explicit seed value.");
-
-            static if (fun.length == 1)
-            {
-                return result[0];
-            }
-            else
-            {
-                return result;
-            }
+        {
+            auto result = Args.init;
+            return reduceImpl!true(r, result);
         }
+    }
+
+    /++
+    Seed version. The seed should be a single value if $(D fun) is a
+    single function. If $(D fun) is multiple functions, then $(D seed)
+    should be a $(XREF typecons,Tuple), with one field per function in $(D f).
+
+    For convenience, if the seed is const, or has qualified fields, then
+    $(D reduce) will operate on an unqualified copy. If this happens
+    then the returned type will not perfectly match $(D S).
+    +/
+    auto reduce(S, R)(S seed, R r)
+    if (isIterable!R)
+    {
+        static if (fun.length == 1)
+            return reducePreImpl(r, seed);
+        else
+        {
+            static assert(isTuple!S, algoFormat("Seed %s should be a Tuple", S.stringof));
+            return reducePreImpl(r, seed.expand);
+        }
+    }
+
+    private auto reducePreImpl(R, Args...)(R r, ref Args args)
+    {
+        alias Result = staticMap!(Unqual, Args);
+        static if (is(Result == Args))
+            alias result = args;
+        else
+            Result result = args;
+        return reduceImpl!false(r, result);
+    }
+
+    private auto reduceImpl(bool mustInitialize, R, Args...)(R r, ref Args args)
+    if (isIterable!R)
+    {
+        static assert(Args.length == fun.length,
+            algoFormat("Seed %s does not have the correct amount of fields (should be %s)", Args.stringof, fun.length));
+        alias E = Select!(isInputRange!R, ElementType!R, ForeachType!R);
+
+        static if (mustInitialize) bool initialized = false;
+        foreach (/+auto ref+/ E e; r) // @@@4707@@@
+        {
+            foreach (i, f; binfuns)
+                static assert(is(typeof(args[i] = f(args[i], e))),
+                    algoFormat("Incompatible function/seed/element: %s/%s/%s", fullyQualifiedName!f, Args[i].stringof, E.stringof));
+
+            static if (mustInitialize) if (initialized == false)
+            {
+                import std.conv : emplaceRef;
+                foreach (i, f; binfuns)
+                    emplaceRef!(Args[i])(args[i], e);
+                initialized = true;
+                continue;
+            }
+
+            foreach (i, f; binfuns)
+                args[i] = f(args[i], e);
+        }
+        static if (mustInitialize) if (!initialized) throw new Exception("Cannot reduce an empty iterable w/o an explicit seed value.");
+
+        static if (Args.length == 1)
+            return args[0];
+        else
+            return tuple(args);
+    }
+}
+
+//Helper for Reduce
+private template ReduceSeedType(E)
+{
+    static template ReduceSeedType(alias fun)
+    {
+        E e = E.init;
+        static alias ReduceSeedType = Unqual!(typeof(fun(e, e)));
+        static assert(is(typeof({
+            ReduceSeedType s = e;
+            s = fun(s, e);
+        })), algoFormat("Unable to deduce an acceptable seed type for %s with element type %s.", fullyQualifiedName!fun, E.stringof));
     }
 }
 
@@ -949,8 +949,8 @@ unittest
 
 unittest
 {
-    debug(std_algorithm) scope(success)
-        writeln("unittest @", __FILE__, ":", __LINE__, " done.");
+    import std.exception : assertThrown;
+
     double[] a = [ 3, 4 ];
     auto r = reduce!("a + b")(0.0, a);
     assert(r == 7);
@@ -1000,16 +1000,10 @@ unittest
     assert(reduce!("a + b", max)(tuple(5, 0), oa) == tuple(hundredSum + 5, 99));
 
     // Test for throwing on empty range plus no seed.
-    try {
-        reduce!"a + b"([1, 2][0..0]);
-        assert(0);
-    } catch(Exception) {}
+    assertThrown(reduce!"a + b"([1, 2][0..0]));
 
     oa.actEmpty = true;
-    try {
-        reduce!"a + b"(oa);
-        assert(0);
-    } catch(Exception) {}
+    assertThrown(reduce!"a + b"(oa));
 }
 
 unittest
@@ -1033,6 +1027,85 @@ unittest
     assert(minmax == tuple(10, 30));
 }
 
+unittest
+{
+    //10709
+    enum foo = "a + 0.5 * b";
+    auto r = [0, 1, 2, 3];
+    auto r1 = reduce!foo(r);
+    auto r2 = reduce!(foo, foo)(r);
+    assert(r1 == 3);
+    assert(r2 == tuple(3, 3));
+}
+
+unittest
+{
+    int i = 0;
+    static struct OpApply
+    {
+        int opApply(int delegate(ref int) dg)
+        {
+            int[] a = [1, 2, 3];
+
+            int res = 0;
+            foreach (ref e; a)
+            {
+                res = dg(e);
+                if (res) break;
+            }
+            return res;
+        }
+    }
+    //test CTFE and functions with context
+    int fun(int a, int b){return a + b + 1;}
+    auto foo()
+    {
+        auto a = reduce!(fun)([1, 2, 3]);
+        auto b = reduce!(fun, fun)([1, 2, 3]);
+        auto c = reduce!(fun)(0, [1, 2, 3]);
+        auto d = reduce!(fun, fun)(tuple(0, 0), [1, 2, 3]);
+        auto e = reduce!(fun)(0, OpApply());
+        auto f = reduce!(fun, fun)(tuple(0, 0), OpApply());
+
+        return max(a, b.expand, c, d.expand);
+    }
+    auto a = foo();
+    enum b = foo();
+}
+
+unittest
+{
+    //http://forum.dlang.org/thread/oghtttkopzjshsuflelk@forum.dlang.org
+    //Seed is tuple of const.
+    static auto minmaxElement(alias F = min, alias G = max, R)(in R range)
+        @safe pure nothrow if (isInputRange!R)
+    {
+        return reduce!(F, G)(tuple(ElementType!R.max,
+                                   ElementType!R.min), range);
+    }
+    assert(minmaxElement([1, 2, 3])== tuple(1, 3));
+}
+
+unittest //12569
+{
+    import std.typecons: tuple;
+    dchar c = 'a';
+    reduce!(min, max)(tuple(c, c), "hello"); // OK
+    static assert(!is(typeof(reduce!(min, max)(tuple(c), "hello"))));
+    static assert(!is(typeof(reduce!(min, max)(tuple(c, c, c), "hello"))));
+
+
+    //"Seed dchar should be a Tuple"
+    static assert(!is(typeof(reduce!(min, max)(c, "hello"))));
+    //"Seed (dchar) does not have the correct amount of fields (should be 2)"
+    static assert(!is(typeof(reduce!(min, max)(tuple(c), "hello"))));
+    //"Seed (dchar, dchar, dchar) does not have the correct amount of fields (should be 2)"
+    static assert(!is(typeof(reduce!(min, max)(tuple(c, c, c), "hello"))));
+    //"Incompatable function/seed/element: all(alias pred = "a")/int/dchar"
+    static assert(!is(typeof(reduce!all(1, "hello"))));
+    static assert(!is(typeof(reduce!(all, all)(tuple(1, 1), "hello"))));
+}
+
 // sum
 /**
 Sums elements of $(D r), which must be a finite input range. Although
@@ -1041,26 +1114,28 @@ b)(0, r)), $(D sum) uses specialized algorithms to maximize accuracy,
 as follows.
 
 $(UL
-$(LI If $(D ElementType!R) is $(D bool) or integral of size less than
-$(D 4), then calculations are performed in 32 bits. Correspondingly,
-$(D sum) returns $(D int) for signed numbers or $(D uint) for $(D
-bool) or unsigned numbers.)
-$(LI If $(D ElementType!R) is integral of size greater than or equal
-to $(D 4), then calculations are performed in 64
-bits. Correspondingly, $(D sum) returns $(D long) for signed numbers
-or $(D ulong) for unsigned numbers.)
 $(LI If $(D ElementType!R) is a floating-point type and $(D R) is a
-random-access range with length, then $(D sum) uses the $(WEB
-en.wikipedia.org/wiki/Pairwise_summation, pairwise summation)
+random-access range with length and slicing, then $(D sum) uses the
+$(WEB en.wikipedia.org/wiki/Pairwise_summation, pairwise summation)
 algorithm.)
 $(LI If $(D ElementType!R) is a floating-point type and $(D R) is a
-finite input range (but not a random-access range with length), then
+finite input range (but not a random-access range with slicing), then
 $(D sum) uses the $(WEB en.wikipedia.org/wiki/Kahan_summation,
 Kahan summation) algorithm.)
+$(LI In all other cases, a simple element by element addition is done.)
 )
 
 For floating point inputs, calculations are made in $(D real)
-precision for $(D real) inputs and in $(D double) precision otherwise.
+precision for $(D real) inputs and in $(D double) precision otherwise
+(Note this is a special case that deviates from $(D reduce)'s behavior,
+which would have kept $(D float) precision for a $(D float) range).
+For all other types, the calculations are done in the same type obtained
+from from adding two elements of the range, which may be a different
+type from the elements themselves (for example, in case of integral promotion).
+
+A seed may be passed to $(D sum). Not only will this seed be used as an initial
+value, but its type will override all the above, and determine the algorithm
+and precision used for sumation.
 
 Note that these specialized summing algorithms execute more primitive operations
 than vanilla summation. Therefore, if in certain cases maximum speed is required
@@ -1068,39 +1143,95 @@ at expense of precision, one can use $(D reduce!((a, b) => a + b)(0, r)), which
 is not specialized for summation.
  */
 auto sum(R)(R r)
-if (isInputRange!R && !isFloatingPoint!(ElementType!R) && !isInfinite!R)
+if (isInputRange!R && !isInfinite!R && is(typeof(r.front + r.front)))
 {
-    alias E = ElementType!R;
-    static if (isIntegral!E || is(Unqual!E == bool))
-        static if (E.sizeof >= 4)
-            static if (E.min < 0)
-                alias Result = long;
-            else
-                alias Result = ulong;
-        else
-            static if (E.min < 0)
-                alias Result = int;
-            else
-                alias Result = uint;
+    alias E = Unqual!(ElementType!R);
+    static if (isFloatingPoint!E)
+        alias Seed = typeof(E.init  + 0.0); //biggest of double/real
     else
-        alias Result = E;
-    Result seed = 0;
-    return reduce!"a + b"(seed, r);
+        alias Seed = typeof(r.front + r.front);
+    return sum(r, Unqual!Seed(0));
+}
+/// ditto
+auto sum(R, E)(R r, E seed)
+if (isInputRange!R && !isInfinite!R && is(typeof(seed = seed + r.front)))
+{
+    static if (isFloatingPoint!E)
+    {
+        static if (hasLength!R && hasSlicing!R)
+            return seed + sumPairwise!E(r);
+        else
+            return sumKahan!E(seed, r);
+    }
+    else
+    {
+        return reduce!"a + b"(seed, r);
+    }
+}
+
+// Pairwise summation http://en.wikipedia.org/wiki/Pairwise_summation
+private auto sumPairwise(Result, R)(R r)
+{
+    static assert (isFloatingPoint!Result);
+    switch (r.length)
+    {
+    case 0: return cast(Result) 0;
+    case 1: return cast(Result) r.front;
+    case 2: return cast(Result) r[0] + cast(Result) r[1];
+    default: return sumPairwise!Result(r[0 .. $ / 2]) + sumPairwise!Result(r[$ / 2 .. $]);
+    }
+}
+
+// Kahan algo http://en.wikipedia.org/wiki/Kahan_summation_algorithm
+private auto sumKahan(Result, R)(Result result, R r)
+{
+    static assert (isFloatingPoint!Result && isMutable!Result);
+    Result c = 0;
+    for (; !r.empty; r.popFront())
+    {
+        auto y = r.front - c;
+        auto t = result + y;
+        c = (t - result) - y;
+        result = t;
+    }
+    return result;
 }
 
 /// Ditto
-unittest
+@safe pure nothrow unittest
 {
-    assert(sum([1, 2, 3, 4]) == 10);
-    assert(sum([1.0, 2, 3, 4]) == 10);
+    //simple integral sumation
+    assert(sum([ 1, 2, 3, 4]) == 10);
+
+    //with integral promotion
     assert(sum([false, true, true, false, true]) == 3);
+    assert(sum(ubyte.max.repeat(100)) == 25500);
+
+    //The result may overflow
+    assert(uint.max.repeat(3).sum()           ==  4294967293U );
+    //But a seed can be used to change the sumation primitive
+    assert(uint.max.repeat(3).sum(ulong.init) == 12884901885UL);
+
+    //Floating point sumation
+    assert(sum([1.0, 2.0, 3.0, 4.0]) == 10);
+
+    //Floating point operations have double precision minimum
+    static assert(is(typeof(sum([1F, 2F, 3F, 4F])) == double));
+    assert(sum([1F, 2, 3, 4]) == 10);
+
+    //Force pair-wise floating point sumation on large integers
+    import std.math : approxEqual;
+    assert(iota(ulong.max / 2, ulong.max / 2 + 4096).sum(0.0)
+               .approxEqual((ulong.max / 2) * 4096.0 + 4096^^2 / 2));
 }
 
-unittest
+@safe pure nothrow unittest
 {
-    static assert(is(typeof(sum([1, 2, 3, 4])) == long));
-    static assert(is(typeof(sum([1U, 2U, 3U, 4U])) == ulong));
-    static assert(is(typeof(sum([1L, 2L, 3L, 4L])) == long));
+    static assert(is(typeof(sum([cast( byte)1])) ==  int));
+    static assert(is(typeof(sum([cast(ubyte)1])) ==  int));
+    static assert(is(typeof(sum([  1,   2,   3,   4])) ==  int));
+    static assert(is(typeof(sum([ 1U,  2U,  3U,  4U])) == uint));
+    static assert(is(typeof(sum([ 1L,  2L,  3L,  4L])) ==  long));
     static assert(is(typeof(sum([1UL, 2UL, 3UL, 4UL])) == ulong));
 
     int[] empty;
@@ -1111,23 +1242,10 @@ unittest
     assert(sum([42, 43, 44, 45]) == 42 + 43 + 44 + 45);
 }
 
-// Pairwise summation http://en.wikipedia.org/wiki/Pairwise_summation
-auto sum(R)(R r)
-if (hasSlicing!R && hasLength!R && isFloatingPoint!(ElementType!R))
+@safe pure nothrow unittest
 {
-    switch (r.length)
-    {
-    case 0: return 0.0;
-    case 1: return r.front;
-    case 2: return r.front + r[1];
-    default: return sum(r[0 .. $ / 2]) + sum(r[$ / 2 .. $]);
-    }
-}
-
-unittest
-{
-    static assert(is(typeof(sum([1., 2., 3., 4.])) == double));
-    static assert(is(typeof(sum([1F, 2F, 3F, 4F])) == double));
+    static assert(is(typeof(sum([1.0, 2.0, 3.0, 4.0])) == double));
+    static assert(is(typeof(sum([ 1F,  2F,  3F,  4F])) == double));
     const(float[]) a = [1F, 2F, 3F, 4F];
     static assert(is(typeof(sum(a)) == double));
     const(float)[] b = [1F, 2F, 3F, 4F];
@@ -1141,27 +1259,7 @@ unittest
     assert(sum([42., 43., 44., 45.5]) == 42 + 43 + 44 + 45.5);
 }
 
-// Kahan algo http://en.wikipedia.org/wiki/Kahan_summation_algorithm
-auto sum(R)(R r)
-if (isInputRange!R && !(hasSlicing!R && hasLength!R)
-    && isFloatingPoint!(ElementType!R) && !isInfinite!R)
-{
-    static if (is(Unqual!(ElementType!R) == real))
-        alias Result = real;
-    else
-        alias Result = double;
-    Result result = 0, c = 0;
-    for (; !r.empty; r.popFront())
-    {
-        auto y = r.front - c;
-        auto t = result + y;
-        c = (t - result) - y;
-        result = t;
-    }
-    return result;
-}
-
-unittest
+@safe pure nothrow unittest
 {
     import std.container;
     static assert(is(typeof(sum(SList!float()[])) == double));
@@ -1173,6 +1271,24 @@ unittest
     assert(sum(SList!double(1, 2)[]) == 1 + 2);
     assert(sum(SList!double(1, 2, 3)[]) == 1 + 2 + 3);
     assert(sum(SList!double(1, 2, 3, 4)[]) == 10);
+}
+
+@safe pure nothrow unittest // 12434
+{
+    immutable a = [10, 20];
+    auto s1 = sum(a);             // Error
+    auto s2 = a.map!(x => x).sum; // Error
+}
+
+unittest
+{
+    import std.bigint;
+    immutable BigInt[] a = BigInt("1_000_000_000_000_000_000").repeat(10).array();
+    immutable ulong[]  b = (ulong.max/2).repeat(10).array();
+    auto sa = a.sum();
+    auto sb = b.sum(BigInt(0)); //reduce ulongs into bigint
+    assert(sa == BigInt("10_000_000_000_000_000_000"));
+    assert(sb == (BigInt(ulong.max/2) * 10));
 }
 
 /**
@@ -1415,7 +1531,7 @@ void uninitializedFill(Range, Value)(Range range, Value filler)
 
         // Must construct stuff by the book
         for (; !range.empty; range.popFront())
-            emplaceRef(range.front, filler);
+            emplaceRef!T(range.front, filler);
     }
     else
         // Doesn't matter whether fill is initialized or not
@@ -1818,21 +1934,18 @@ private struct FilterBidiResult(alias pred, Range)
 // move
 /**
 Moves $(D source) into $(D target) via a destructive
-copy. Specifically: $(UL $(LI If $(D hasAliasing!T) is true (see
-$(XREF traits, hasAliasing)), then the representation of $(D source)
-is bitwise copied into $(D target) and then $(D source = T.init) is
-evaluated.)  $(LI Otherwise, $(D target = source) is evaluated.)) See
-also $(XREF exception, pointsTo).
-
-Preconditions:
-$(D &source == &target || !pointsTo(source, source))
+copy.
 */
 void move(T)(ref T source, ref T target)
 {
     import core.stdc.string : memcpy;
-    import std.exception : pointsTo;
 
-    assert(!pointsTo(source, source));
+    static if (hasAliasing!T) if (!__ctfe)
+    {
+        import std.exception : doesPointTo;
+        assert(!doesPointTo(source, source), "Cannot move object with internal pointer.");
+    }
+
     static if (is(T == struct))
     {
         if (&source == &target) return;
@@ -1840,7 +1953,10 @@ void move(T)(ref T source, ref T target)
         // and bitblast source over it
         static if (hasElaborateDestructor!T) typeid(T).destroy(&target);
 
-        memcpy(&target, &source, T.sizeof);
+        static if (hasElaborateAssign!T || !isAssignable!T)
+            memcpy(&target, &source, T.sizeof);
+        else
+            target = source;
 
         // If the source defines a destructor or a postblit hook, we must obliterate the
         // object in order to avoid double freeing and undue aliasing
@@ -1864,11 +1980,6 @@ void move(T)(ref T source, ref T target)
         // Primitive data (including pointers and arrays) or class -
         // assignment works great
         target = source;
-        // static if (is(typeof(source = null)))
-        // {
-        //     // Nullify the source to help the garbage collector
-        //     source = null;
-        // }
     }
 }
 
@@ -1876,25 +1987,27 @@ unittest
 {
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
-    Object obj1 = new Object;
-    Object obj2 = obj1;
-    Object obj3;
-    move(obj2, obj3);
-    assert(obj3 is obj1);
+    import std.exception : assertCTFEable;
+    assertCTFEable!((){
+        Object obj1 = new Object;
+        Object obj2 = obj1;
+        Object obj3;
+        move(obj2, obj3);
+        assert(obj3 is obj1);
 
-    static struct S1 { int a = 1, b = 2; }
-    S1 s11 = { 10, 11 };
-    S1 s12;
-    move(s11, s12);
-    assert(s11.a == 10 && s11.b == 11 && s12.a == 10 && s12.b == 11);
+        static struct S1 { int a = 1, b = 2; }
+        S1 s11 = { 10, 11 };
+        S1 s12;
+        move(s11, s12);
+        assert(s11.a == 10 && s11.b == 11 && s12.a == 10 && s12.b == 11);
 
-    static struct S2 { int a = 1; int * b; }
-    S2 s21 = { 10, null };
-    s21.b = new int;
-    S2 s22;
-    move(s21, s22);
-    assert(s21 == s22);
-
+        static struct S2 { int a = 1; int * b; }
+        S2 s21 = { 10, null };
+        s21.b = new int;
+        S2 s22;
+        move(s21, s22);
+        assert(s21 == s22);
+    });
     // Issue 5661 test(1)
     static struct S3
     {
@@ -1927,14 +2040,20 @@ T move(T)(ref T source)
 {
     import core.stdc.string : memcpy;
 
-    // Can avoid to check aliasing.
+    static if (hasAliasing!T) if (!__ctfe)
+    {
+        import std.exception : doesPointTo;
+        assert(!doesPointTo(source, source), "Cannot move object with internal pointer.");
+    }
 
     T result = void;
     static if (is(T == struct))
     {
         // Can avoid destructing result.
-
-        memcpy(&result, &source, T.sizeof);
+        static if (hasElaborateAssign!T || !isAssignable!T)
+            memcpy(&result, &source, T.sizeof);
+        else
+            result = source;
 
         // If the source defines a destructor or a postblit hook, we must obliterate the
         // object in order to avoid double freeing and undue aliasing
@@ -1966,21 +2085,24 @@ unittest
 {
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
-    Object obj1 = new Object;
-    Object obj2 = obj1;
-    Object obj3 = move(obj2);
-    assert(obj3 is obj1);
+    import std.exception : assertCTFEable;
+    assertCTFEable!((){
+        Object obj1 = new Object;
+        Object obj2 = obj1;
+        Object obj3 = move(obj2);
+        assert(obj3 is obj1);
 
-    static struct S1 { int a = 1, b = 2; }
-    S1 s11 = { 10, 11 };
-    S1 s12 = move(s11);
-    assert(s11.a == 10 && s11.b == 11 && s12.a == 10 && s12.b == 11);
+        static struct S1 { int a = 1, b = 2; }
+        S1 s11 = { 10, 11 };
+        S1 s12 = move(s11);
+        assert(s11.a == 10 && s11.b == 11 && s12.a == 10 && s12.b == 11);
 
-    static struct S2 { int a = 1; int * b; }
-    S2 s21 = { 10, null };
-    s21.b = new int;
-    S2 s22 = move(s21);
-    assert(s21 == s22);
+        static struct S2 { int a = 1; int * b; }
+        S2 s21 = { 10, null };
+        s21.b = new int;
+        S2 s22 = move(s21);
+        assert(s21 == s22);
+    });
 
     // Issue 5661 test(1)
     static struct S3
@@ -2075,8 +2197,8 @@ unittest// Issue 8057
 /**
 For each element $(D a) in $(D src) and each element $(D b) in $(D
 tgt) in lockstep in increasing order, calls $(D move(a, b)). Returns
-the leftover portion of $(D tgt). Throws an exeption if there is not
-enough room in $(D tgt) to acommodate all of $(D src).
+the leftover portion of $(D tgt). Throws an exception if there is not
+enough room in $(D tgt) to accommodate all of $(D src).
 
 Preconditions:
 $(D walkLength(src) <= walkLength(tgt))
@@ -2143,7 +2265,7 @@ unittest
 {
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
-    int[] a = [ 1, 2, 3, 4, 5 ];
+   int[] a = [ 1, 2, 3, 4, 5 ];
     int[] b = new int[3];
     assert(moveSome(a, b)[0] is a[3 .. $]);
     assert(a[0 .. 3] == b);
@@ -2160,30 +2282,24 @@ If $(D lhs) and $(D rhs) reference the same instance, then nothing is done.
 
 $(D lhs) and $(D rhs) must be mutable. If $(D T) is a struct or union, then
 its fields must also all be (recursivelly) mutable.
-
-Preconditions:
-
-$(D !pointsTo(lhs, lhs) && !pointsTo(lhs, rhs) && !pointsTo(rhs, lhs)
-&& !pointsTo(rhs, rhs))
-
-See_Also:
-    $(XREF exception, pointsTo)
- */
+*/
 void swap(T)(ref T lhs, ref T rhs) @trusted pure nothrow
 if (isBlitAssignable!T && !is(typeof(lhs.proxySwap(rhs))))
 {
+    static if (hasAliasing!T) if (!__ctfe)
+    {
+        import std.exception : doesPointTo;
+        assert(!doesPointTo(lhs, lhs), "Swap: lhs internal pointer.");
+        assert(!doesPointTo(rhs, rhs), "Swap: rhs internal pointer.");
+        assert(!doesPointTo(lhs, rhs), "Swap: lhs points to rhs.");
+        assert(!doesPointTo(rhs, lhs), "Swap: rhs points to lhs.");
+    }
+
     static if (hasElaborateAssign!T || !isAssignable!T)
     {
-        import std.exception : pointsTo;
-
         if (&lhs != &rhs)
         {
             // For structs with non-trivial assignment, move memory directly
-            // First check for undue aliasing
-            static if (hasIndirections!T)
-                assert(!pointsTo(lhs, rhs) && !pointsTo(rhs, lhs)
-                    && !pointsTo(lhs, lhs) && !pointsTo(rhs, rhs));
-            // Swap bits
             ubyte[T.sizeof] t = void;
             auto a = (cast(ubyte*) &lhs)[0 .. T.sizeof];
             auto b = (cast(ubyte*) &rhs)[0 .. T.sizeof];
@@ -2325,7 +2441,32 @@ unittest
     // 12024
     import std.datetime;
     SysTime a, b;
+}
+
+unittest // 9975
+{
+    import std.exception : doesPointTo, mayPointTo;
+    static struct S2
+    {
+        union
+        {
+            size_t sz;
+            string s;
+        }
+    }
+    S2 a , b;
+    a.sz = -1;
+    assert(!doesPointTo(a, b));
+    assert( mayPointTo(a, b));
     swap(a, b);
+
+    //Note: we can catch an error here, because there is no RAII in this test
+    import std.exception : assertThrown;
+    void* p, pp;
+    p = &p;
+    assertThrown!Error(move(p));
+    assertThrown!Error(move(p, pp));
+    assertThrown!Error(swap(p, pp));
 }
 
 void swapFront(R1, R2)(R1 r1, R2 r2)
@@ -2684,7 +2825,6 @@ unittest
 
             auto s2 = splitter(d, [4, 5]);
             assert(equal(s2.front, [1,2,3]));
-            assert(equal(s2.back, [6,7,8,9,10]));
         }
     }
 }
@@ -2825,12 +2965,16 @@ if (is(typeof(Range.init.front == Separator.init.front) : bool)
         // Bidirectional functionality as suggested by Brad Roberts.
         static if (isBidirectionalRange!Range && isBidirectionalRange!Separator)
         {
+            //Deprecated. It will be removed in December 2015
+            deprecated("splitter!(Range, Range) cannot be iterated backwards (due to separator overlap).")
             @property Range back()
             {
                 ensureBackLength();
                 return _input[_input.length - _backLength .. _input.length];
             }
 
+            //Deprecated. It will be removed in December 2015
+            deprecated("splitter!(Range, Range) cannot be iterated backwards (due to separator overlap).")
             void popBack()
             {
                 ensureBackLength();
@@ -3007,7 +3151,7 @@ private struct SplitterResult(alias isTerminator, Range)
         static if (fullSlicing)
             return _input[0 .. _end];
         else
-            return _input.save.takeExactly(_end);
+            return _input.takeExactly(_end);
     }
 
     void popFront()
@@ -3070,10 +3214,8 @@ unittest
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
     void compare(string sentence, string[] witness)
     {
-        import std.string : format;
-
         auto r = splitter!"a == ' '"(sentence);
-        assert(equal(r.save, witness), format("got: %(%s, %) expected: %(%s, %)", r, witness));
+        assert(equal(r.save, witness), algoFormat("got: %(%s, %) expected: %(%s, %)", r, witness));
     }
 
     compare(" Mary  has a little lamb.   ",
@@ -3116,11 +3258,9 @@ unittest
     ];
     foreach ( entry ; entries )
     {
-        import std.string : format;
-
         auto a = iota(entry.low, entry.high).filter!"true"();
         auto b = splitter!"a%2"(a);
-        assert(equal!equal(b.save, entry.result), format("got: %(%s, %) expected: %(%s, %)", b, entry.result));
+        assert(equal!equal(b.save, entry.result), algoFormat("got: %(%s, %) expected: %(%s, %)", b, entry.result));
     }
 }
 
@@ -3153,6 +3293,8 @@ if (isSomeChar!C)
 
         void getFirst() pure @safe
         {
+            import std.uni : isWhite;
+
             auto r = find!(std.uni.isWhite)(_s);
             _frontLength = _s.length - r.length;
         }
@@ -3179,12 +3321,12 @@ if (isSomeChar!C)
             getFirst();
         }
 
-        @property bool empty() const pure nothrow @safe
+        @property bool empty() const @safe pure nothrow
         {
             return _s.empty;
         }
 
-        @property inout(Result) save() inout pure nothrow @safe
+        @property inout(Result) save() inout @safe pure nothrow
         {
             return this;
         }
@@ -3243,7 +3385,7 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.string : split, format;
+    import std.string : split;
 
     // Check consistency:
     // All flavors of split should produce the same results
@@ -3257,7 +3399,7 @@ unittest
         {
             auto result = split(input, s);
 
-            assert(equal(result, split(input, [s])), format(`"[%(%s,%)]"`, split(input, [s])));
+            assert(equal(result, split(input, [s])), algoFormat(`"[%(%s,%)]"`, split(input, [s])));
             //assert(equal(result, split(input, [s].filter!"true"())));                          //Not yet implemented
             assert(equal(result, split!((a) => a == s)(input)), text(split!((a) => a == s)(input)));
 
@@ -3793,7 +3935,7 @@ unittest
     }
 
     assert(equal(result, "abc12def34"d),
-        "Unexpected result: '%s'"d.format(result));
+        "Unexpected result: '%s'"d.algoFormat(result));
 }
 
 // Issue 8061
@@ -4090,7 +4232,7 @@ haystack) are compared with $(D needle) by using predicate $(D
 pred). Performs $(BIGOH walkLength(haystack)) evaluations of $(D
 pred).
 
-To _find the last occurence of $(D needle) in $(D haystack), call $(D
+To _find the last occurrence of $(D needle) in $(D haystack), call $(D
 find(retro(haystack), needle)). See $(XREF range, retro).
 
 Params:
@@ -4342,7 +4484,7 @@ unittest
 {
     import std.exception : assertCTFEable;
 
-    void dg() pure @safe nothrow
+    void dg() @safe pure nothrow
     {
         byte[]  sarr = [1, 2, 3, 4];
         ubyte[] uarr = [1, 2, 3, 4];
@@ -4698,6 +4840,8 @@ Finds two or more $(D needles) into a $(D haystack). The predicate $(D
 pred) is used throughout to compare elements. By default, elements are
 compared for equality.
 
+$(D BoyerMooreFinder) allocates GC memory.
+
 Params:
 
 haystack = The target of the search. Must be an $(GLOSSARY input
@@ -4843,8 +4987,8 @@ unittest
 struct BoyerMooreFinder(alias pred, Range)
 {
 private:
-    size_t[] skip;
-    ptrdiff_t[ElementType!(Range)] occ;
+    size_t[] skip;                              // GC allocated
+    ptrdiff_t[ElementType!(Range)] occ;         // GC allocated
     Range needle;
 
     ptrdiff_t occurrence(ElementType!(Range) c)
@@ -5611,13 +5755,9 @@ struct Until(alias pred, Range, Sentinel) if (isInputRange!Range)
         assert(!empty);
         if (!_openRight)
         {
-            if (predSatisfied())
-            {
-                _done = true;
-                return;
-            }
+            _done = predSatisfied();
             _input.popFront();
-            _done = _input.empty;
+            _done = _done || _input.empty;
         }
         else
         {
@@ -5687,6 +5827,13 @@ unittest
     assert(equal(a.until([7, 2]), [1, 2, 4, 7][]));
     assert(equal(a.until(7, OpenRight.no), [1, 2, 4, 7][]));
     assert(equal(until!"a == 2"(a, OpenRight.no), [1, 2][]));
+}
+
+unittest // bugzilla 13171
+{
+    auto a = [1, 2, 3, 4];
+    assert(equal(refRange(&a).until(3, OpenRight.no), [1, 2, 3]));
+    assert(a == [4]);
 }
 
 /**
@@ -6524,7 +6671,7 @@ unittest
 /**
 The first version counts the number of elements $(D x) in $(D r) for
 which $(D pred(x, value)) is $(D true). $(D pred) defaults to
-equality. Performs $(BIGOH r.length) evaluations of $(D pred).
+equality. Performs $(BIGOH haystack.length) evaluations of $(D pred).
 
 The second version returns the number of times $(D needle) occurs in
 $(D haystack). Throws an exception if $(D needle.empty), as the _count
@@ -6533,7 +6680,7 @@ are not considered, for example $(D count("aaa", "aa")) is $(D 1), not
 $(D 2).
 
 The third version counts the elements for which $(D pred(x)) is $(D
-true). Performs $(BIGOH r.length) evaluations of $(D pred).
+true). Performs $(BIGOH haystack.length) evaluations of $(D pred).
 
 Note: Regardless of the overload, $(D count) will not accept
 infinite ranges for $(D haystack).
@@ -6600,9 +6747,8 @@ size_t count(alias pred = "a == b", R1, R2)(R1 haystack, R2 needle)
         isForwardRange!R2 &&
         is(typeof(binaryFun!pred(haystack.front, needle.front)) : bool))
 {
-    import std.exception : enforce;
+    assert(!needle.empty, "Cannot count occurrences of an empty range");
 
-    enforce(!needle.empty, "Cannot count occurrences of an empty range");
     static if (isInfinite!R2)
     {
         //Note: This is the special case of looking for an infinite inside a finite...
@@ -6638,6 +6784,12 @@ unittest
     int[] a = [ 1, 2, 4, 3, 2, 5, 3, 2, 4 ];
     assert(count!("a == 3")(a) == 2);
     assert(count("日本語") == 3);
+}
+
+// Issue 11253
+nothrow unittest
+{
+    assert([1, 2, 3].count([2, 3]) == 1);
 }
 
 // balancedParens
@@ -6971,9 +7123,13 @@ unittest
 
 // MinType
 private template MinType(T...)
-    if (T.length >= 2)
+    if (T.length >= 1)
 {
-    static if (T.length == 2)
+    static if (T.length == 1)
+    {
+        alias MinType = T[0];
+    }
+    else static if (T.length == 2)
     {
         static if (!is(typeof(T[0].min)))
             alias MinType = CommonType!T;
@@ -6993,44 +7149,38 @@ private template MinType(T...)
     }
     else
     {
-        alias MinType = MinType!(T[0 .. $/2], MinType!(T[$/2 .. $]));
+        alias MinType = MinType!(MinType!(T[0 .. ($+1)/2]), MinType!(T[($+1)/2 .. $]));
     }
 }
 
 // min
 /**
-Returns the minimum of the passed-in values. The type of the result is
-computed by using $(XREF traits, CommonType).
+Returns the minimum of the passed-in values.
 */
 MinType!T min(T...)(T args)
     if (T.length >= 2)
 {
-    static if (T.length == 2)
-    {
-        alias T0 = T[0];
-        alias T1 = T[1];
-        alias a = args[0];
-        alias b = args[1];
-
-        static assert (is(typeof(a < b)),
-            format("Invalid arguments: Cannot compare types %s and %s.", T0.stringof, T1.stringof));
-
-        static if (isIntegral!T0 && isIntegral!T1 &&
-                   (mostNegative!T0 < 0) != (mostNegative!T1 < 0))
-        {
-            static if (mostNegative!T0 < 0)
-                immutable chooseB = b < a && a > 0;
-            else
-                immutable chooseB = b < a || b < 0;
-        }
-        else
-            immutable chooseB = b < a;
-        return cast(typeof(return)) (chooseB ? b : a);
-    }
+    //Get "a"
+    static if (T.length <= 2)
+        alias args[0] a;
     else
-    {
-        return min(args[0 .. $/2], min(args[$/2 .. $]));
-    }
+        auto a = min(args[0 .. ($+1)/2]);
+    alias typeof(a) T0;
+
+    //Get "b"
+    static if (T.length <= 3)
+        alias args[$-1] b;
+    else
+        auto b = min(args[($+1)/2 .. $]);
+    alias typeof(b) T1;
+
+    static assert (is(typeof(a < b)),
+        algoFormat("Invalid arguments: Cannot compare types %s and %s.", T0.stringof, T1.stringof));
+
+    //Do the "min" proper with a and b
+    import std.functional : lessThan;
+    immutable chooseA = lessThan!(T0, T1)(a, b);
+    return cast(typeof(return)) (chooseA ? a : b);
 }
 
 unittest
@@ -7066,9 +7216,13 @@ unittest
 
 // MaxType
 private template MaxType(T...)
-    if (T.length >= 2)
+    if (T.length >= 1)
 {
-    static if (T.length == 2)
+    static if (T.length == 1)
+    {
+        alias MaxType = T[0];
+    }
+    else static if (T.length == 2)
     {
         static if (!is(typeof(T[0].min)))
             alias MaxType = CommonType!T;
@@ -7079,44 +7233,38 @@ private template MaxType(T...)
     }
     else
     {
-        alias MaxType = MaxType!(T[0 .. $/2], MaxType!(T[$/2 .. $]));
+        alias MaxType = MaxType!(MaxType!(T[0 .. ($+1)/2]), MaxType!(T[($+1)/2 .. $]));
     }
 }
 
 // max
 /**
-Returns the maximum of the passed-in values. The type of the result is
-computed by using $(XREF traits, CommonType).
+Returns the maximum of the passed-in values.
 */
 MaxType!T max(T...)(T args)
     if (T.length >= 2)
 {
-    static if (T.length == 2)
-    {
-        alias T0 = T[0];
-        alias T1 = T[1];
-        alias a = args[0];
-        alias b = args[1];
-
-        static assert (is(typeof(a < b)),
-            format("Invalid arguments: Cannot compare types %s and %s.", T0.stringof, T1.stringof));
-
-        static if (isIntegral!T0 && isIntegral!T1 &&
-                   (mostNegative!T0 < 0) != (mostNegative!T1 < 0))
-        {
-            static if (mostNegative!T0 < 0)
-                immutable chooseB = b > a || a < 0;
-            else
-                immutable chooseB = b > a && b > 0;
-        }
-        else
-            immutable chooseB = b > a;
-        return cast(typeof(return)) (chooseB ? b : a);
-    }
+    //Get "a"
+    static if (T.length <= 2)
+        alias args[0] a;
     else
-    {
-        return max(args[0 .. $/2], max(args[$/2 .. $]));
-    }
+        auto a = max(args[0 .. ($+1)/2]);
+    alias typeof(a) T0;
+
+    //Get "b"
+    static if (T.length <= 3)
+        alias args[$-1] b;
+    else
+        auto b = max(args[($+1)/2 .. $]);
+    alias typeof(b) T1;
+
+    static assert (is(typeof(a < b)),
+        algoFormat("Invalid arguments: Cannot compare types %s and %s.", T0.stringof, T1.stringof));
+
+    //Do the "max" proper with a and b
+    import std.functional : lessThan;
+    immutable chooseB = lessThan!(T0, T1)(a, b);
+    return cast(typeof(return)) (chooseB ? b : a);
 }
 
 ///
@@ -7165,6 +7313,62 @@ unittest
 }
 
 /**
+Returns $(D val), if it is between $(D lower) and $(D upper).
+Otherwise returns the nearest of the two. Equivalent to $(D max(lower,
+min(upper,val))).
+*/
+auto clamp(T1, T2, T3)(T1 val, T2 lower, T3 upper)
+in
+{
+    import std.functional : greaterThan;
+    assert(!lower.greaterThan(upper));
+}
+body
+{
+    return max(lower, min(upper, val));
+}
+
+///
+unittest
+{
+    assert(clamp(2, 1, 3) == 2);
+    assert(clamp(0, 1, 3) == 1);
+    assert(clamp(4, 1, 3) == 3);
+
+    assert(clamp(1, 1, 1) == 1);
+
+    assert(clamp(5, -1, 2u) == 2);
+}
+
+unittest
+{
+    debug(std_algorithm) scope(success)
+        writeln("unittest @", __FILE__, ":", __LINE__, " done.");
+    int a = 1;
+    short b = 6;
+    double c = 2;
+    static assert(is(typeof(clamp(c,a,b)) == double));
+    assert(clamp(c,   a, b) == c);
+    assert(clamp(a-c, a, b) == a);
+    assert(clamp(b+c, a, b) == b);
+    // mixed sign
+    a = -5;
+    uint f = 5;
+    static assert(is(typeof(clamp(f, a, b)) == int));
+    assert(clamp(f, a, b) == f);
+    // similar type deduction for (u)long
+    static assert(is(typeof(clamp(-1L, -2L, 2UL)) == long));
+
+    // user-defined types
+    import std.datetime;
+    assert(clamp(Date(1982, 1, 4), Date(1012, 12, 21), Date(2012, 12, 21)) == Date(1982, 1, 4));
+    assert(clamp(Date(1982, 1, 4), Date.min, Date.max) == Date(1982, 1, 4));
+    // UFCS style
+    assert(Date(1982, 1, 4).clamp(Date.min, Date.max) == Date(1982, 1, 4));
+
+}
+
+/**
 Returns the minimum element of a range together with the number of
 occurrences. The function can actually be used for counting the
 maximum or any other ordering predicate (that's why $(D maxCount) is
@@ -7182,7 +7386,7 @@ minCount(alias pred = "a < b", Range)(Range range)
     alias RetType = Tuple!(T, size_t);
 
     static assert (is(typeof(RetType(range.front, 1))),
-        format("Error: Cannot call minCount on a %s, because it is not possible "~
+        algoFormat("Error: Cannot call minCount on a %s, because it is not possible "~
                "to copy the result value (a %s) into a Tuple.", Range.stringof, T.stringof));
 
     enforce(!range.empty, "Can't count elements from an empty range");
@@ -7245,7 +7449,7 @@ minCount(alias pred = "a < b", Range)(Range range)
     }
     else
         static assert(false,
-            format("Sorry, can't find the minCount of a %s: Don't know how "~
+            algoFormat("Sorry, can't find the minCount of a %s: Don't know how "~
                    "to keep track of the smallest %s element.", Range.stringof, T.stringof));
 }
 
@@ -7354,7 +7558,7 @@ unittest
 Returns the position of the minimum element of forward range $(D
 range), i.e. a subrange of $(D range) starting at the position of its
 smallest element and with the same ending as $(D range). The function
-can actually be used for counting the maximum or any other ordering
+can actually be used for finding the maximum or any other ordering
 predicate (that's why $(D maxPos) is not provided).
  */
 Range minPos(alias pred = "a < b", Range)(Range range)
@@ -7525,30 +7729,31 @@ struct Levenshtein(Range, alias equals, CostType = size_t)
             auto tt = t;
             foreach (j; 1 .. cols)
             {
-                auto cSub = _matrix[i - 1][j - 1]
+                auto cSub = matrix(i - 1,j - 1)
                     + (equals(sfront, tt.front) ? 0 : _substitutionIncrement);
                 tt.popFront();
-                auto cIns = _matrix[i][j - 1] + _insertionIncrement;
-                auto cDel = _matrix[i - 1][j] + _deletionIncrement;
-                switch (min_index(cSub, cIns, cDel)) {
-                case 0:
-                    _matrix[i][j] = cSub;
-                    break;
-                case 1:
-                    _matrix[i][j] = cIns;
-                    break;
-                default:
-                    _matrix[i][j] = cDel;
-                    break;
+                auto cIns = matrix(i,j - 1) + _insertionIncrement;
+                auto cDel = matrix(i - 1,j) + _deletionIncrement;
+                switch (min_index(cSub, cIns, cDel))
+                {
+                    case 0:
+                        matrix(i,j) = cSub;
+                        break;
+                    case 1:
+                        matrix(i,j) = cIns;
+                        break;
+                    default:
+                        matrix(i,j) = cDel;
+                        break;
                 }
             }
         }
-        return _matrix[slen][tlen];
+        return matrix(slen,tlen);
     }
 
     EditOp[] path(Range s, Range t)
     {
-        distance(s, t);
+        distanceWithPath(s, t);
         return path();
     }
 
@@ -7558,14 +7763,14 @@ struct Levenshtein(Range, alias equals, CostType = size_t)
         size_t i = rows - 1, j = cols - 1;
         // restore the path
         while (i || j) {
-            auto cIns = j == 0 ? CostType.max : _matrix[i][j - 1];
-            auto cDel = i == 0 ? CostType.max : _matrix[i - 1][j];
+            auto cIns = j == 0 ? CostType.max : matrix(i,j - 1);
+            auto cDel = i == 0 ? CostType.max : matrix(i - 1,j);
             auto cSub = i == 0 || j == 0
                 ? CostType.max
-                : _matrix[i - 1][j - 1];
+                : matrix(i - 1,j - 1);
             switch (min_index(cSub, cIns, cDel)) {
             case 0:
-                result ~= _matrix[i - 1][j - 1] == _matrix[i][j]
+                result ~= matrix(i - 1,j - 1) == matrix(i,j)
                     ? EditOp.none
                     : EditOp.substitute;
                 --i;
@@ -7589,27 +7794,27 @@ private:
     CostType _deletionIncrement = 1,
         _insertionIncrement = 1,
         _substitutionIncrement = 1;
-    CostType[][] _matrix;
+    CostType[] _matrix;
     size_t rows, cols;
+
+    // Treat _matrix as a rectangular array
+    ref CostType matrix(size_t row, size_t col) { return _matrix[row * cols + col]; }
 
     void AllocMatrix(size_t r, size_t c) {
         rows = r;
         cols = c;
-        if (_matrix.length < r || _matrix[0].length < c) {
+        if (_matrix.length < r * c) {
             delete _matrix;
-            _matrix = new CostType[][](r, c);
+            _matrix = new CostType[r * c];
             InitMatrix();
         }
     }
 
     void InitMatrix() {
-        foreach (i, row; _matrix) {
-            row[0] = i * _deletionIncrement;
-        }
-        if (!_matrix.length) return;
-        for (auto i = 0u; i != _matrix[0].length; ++i) {
-            _matrix[0][i] = i * _insertionIncrement;
-        }
+        foreach (r; 0 .. rows)
+            matrix(r,0) = r * _deletionIncrement;
+        foreach (c; 0 .. cols)
+            matrix(0,c) = c * _insertionIncrement;
     }
 
     static uint min_index(CostType i0, CostType i1, CostType i2)
@@ -7623,6 +7828,79 @@ private:
             return i1 <= i2 ? 1 : 2;
         }
     }
+
+    CostType distanceWithPath(Range s, Range t)
+    {
+        auto slen = walkLength(s.save), tlen = walkLength(t.save);
+        AllocMatrix(slen + 1, tlen + 1);
+        foreach (i; 1 .. rows)
+        {
+            auto sfront = s.front;
+            auto tt = t.save;
+            foreach (j; 1 .. cols)
+            {
+                auto cSub = matrix(i - 1,j - 1)
+                    + (equals(sfront, tt.front) ? 0 : _substitutionIncrement);
+                tt.popFront();
+                auto cIns = matrix(i,j - 1) + _insertionIncrement;
+                auto cDel = matrix(i - 1,j) + _deletionIncrement;
+                switch (min_index(cSub, cIns, cDel))
+                {
+                case 0:
+                    matrix(i,j) = cSub;
+                    break;
+                case 1:
+                    matrix(i,j) = cIns;
+                    break;
+                default:
+                    matrix(i,j) = cDel;
+                    break;
+                }
+            }
+            s.popFront();
+        }
+        return matrix(slen,tlen);
+    }
+
+    CostType distanceLowMem(Range s, Range t, CostType slen, CostType tlen)
+    {
+        CostType lastdiag, olddiag;
+        AllocMatrix(slen + 1, 1);
+        foreach (y; 1 .. slen + 1)
+        {
+            _matrix[y] = y;
+        }
+        foreach (x; 1 .. tlen + 1)
+        {
+            auto tfront = t.front;
+            auto ss = s.save;
+            _matrix[0] = x;
+            lastdiag = x - 1;
+            foreach (y; 1 .. rows)
+            {
+                olddiag = _matrix[y];
+                auto cSub = lastdiag + (equals(ss.front, tfront) ? 0 : _substitutionIncrement);
+                ss.popFront();
+                auto cIns = _matrix[y - 1] + _insertionIncrement;
+                auto cDel = _matrix[y] + _deletionIncrement;
+                switch (min_index(cSub, cIns, cDel))
+                {
+                case 0:
+                    _matrix[y] = cSub;
+                    break;
+                case 1:
+                    _matrix[y] = cIns;
+                    break;
+                default:
+                    _matrix[y] = cDel;
+                    break;
+                }
+                lastdiag = olddiag;
+            }
+            t.popFront();
+        }
+        return _matrix[slen];
+    }
 }
 
 /**
@@ -7631,13 +7909,24 @@ distance) between $(D s) and $(D t). The Levenshtein distance computes
 the minimal amount of edit operations necessary to transform $(D s)
 into $(D t).  Performs $(BIGOH s.length * t.length) evaluations of $(D
 equals) and occupies $(BIGOH s.length * t.length) storage.
+
+Allocates GC memory.
 */
 size_t levenshteinDistance(alias equals = "a == b", Range1, Range2)
     (Range1 s, Range2 t)
     if (isForwardRange!(Range1) && isForwardRange!(Range2))
 {
     Levenshtein!(Range1, binaryFun!(equals), size_t) lev;
-    return lev.distance(s, t);
+    auto slen = walkLength(s.save);
+    auto tlen = walkLength(t.save);
+    if (slen > tlen)
+    {
+        return lev.distanceLowMem(s, t, slen, tlen);
+    }
+    else
+    {
+        return lev.distanceLowMem(t, s, tlen, slen);
+    }
 }
 
 ///
@@ -7650,11 +7939,15 @@ unittest
     assert(levenshteinDistance("kitten", "sitting") == 3);
     assert(levenshteinDistance!((a, b) => std.uni.toUpper(a) == std.uni.toUpper(b))
         ("parks", "SPARK") == 2);
+    assert(levenshteinDistance("parks".filter!"true", "spark".filter!"true") == 2);
+    assert(levenshteinDistance("ID", "I♥D") == 1);
 }
 
 /**
 Returns the Levenshtein distance and the edit path between $(D s) and
 $(D t).
+
+Allocates GC memory.
 */
 Tuple!(size_t, EditOp[])
 levenshteinDistanceAndPath(alias equals = "a == b", Range1, Range2)
@@ -7662,7 +7955,7 @@ levenshteinDistanceAndPath(alias equals = "a == b", Range1, Range2)
     if (isForwardRange!(Range1) && isForwardRange!(Range2))
 {
     Levenshtein!(Range1, binaryFun!(equals)) lev;
-    auto d = lev.distance(s, t);
+    auto d = lev.distanceWithPath(s, t);
     return tuple(d, lev.path());
 }
 
@@ -7692,13 +7985,15 @@ unittest
 Copies the content of $(D source) into $(D target) and returns the
 remaining (unfilled) part of $(D target).
 
+Preconditions: $(D target) shall have enough room to accomodate
+$(D source).
+
 See_Also:
     $(WEB sgi.com/tech/stl/_copy.html, STL's _copy)
  */
 Range2 copy(Range1, Range2)(Range1 source, Range2 target)
 if (isInputRange!Range1 && isOutputRange!(Range2, ElementType!Range1))
 {
-
     static Range2 genericImpl(Range1 source, Range2 target)
     {
         // Specialize for 2 random access ranges.
@@ -7707,6 +8002,9 @@ if (isInputRange!Range1 && isOutputRange!(Range2, ElementType!Range1))
         static if (isRandomAccessRange!Range1 && hasLength!Range1
             && hasSlicing!Range2 && isRandomAccessRange!Range2 && hasLength!Range2)
         {
+            assert(target.length >= source.length,
+                "Cannot copy a source range into a smaller target range.");
+
             auto len = source.length;
             foreach (idx; 0 .. len)
                 target[idx] = source[idx];
@@ -7722,8 +8020,6 @@ if (isInputRange!Range1 && isOutputRange!(Range2, ElementType!Range1))
     static if (isArray!Range1 && isArray!Range2 &&
                is(Unqual!(typeof(source[0])) == Unqual!(typeof(target[0]))))
     {
-        import std.exception : enforce;
-
         immutable overlaps = source.ptr < target.ptr + target.length &&
                              target.ptr < source.ptr + source.length;
 
@@ -7736,7 +8032,7 @@ if (isInputRange!Range1 && isOutputRange!(Range2, ElementType!Range1))
             // Array specialization.  This uses optimized memory copying
             // routines under the hood and is about 10-20x faster than the
             // generic implementation.
-            enforce(target.length >= source.length,
+            assert(target.length >= source.length,
                 "Cannot copy a source array into a smaller target array.");
             target[0..source.length] = source[];
 
@@ -8417,23 +8713,25 @@ movement to be done which improves the execution time of the function.
 
 The function $(D remove) works on any forward range. The moving
 strategy is (listed from fastest to slowest): $(UL $(LI If $(D s ==
-SwapStrategy.unstable && isRandomAccessRange!Range &&
-hasLength!Range), then elements are moved from the end of the range
-into the slots to be filled. In this case, the absolute minimum of
-moves is performed.)  $(LI Otherwise, if $(D s ==
-SwapStrategy.unstable && isBidirectionalRange!Range &&
-hasLength!Range), then elements are still moved from the end of the
-range, but time is spent on advancing between slots by repeated calls
-to $(D range.popFront).)  $(LI Otherwise, elements are moved incrementally
-towards the front of $(D range); a given element is never moved
-several times, but more elements are moved than in the previous
+SwapStrategy.unstable && isRandomAccessRange!Range && hasLength!Range
+&& hasLvalueElements!Range), then elements are moved from the end
+of the range into the slots to be filled. In this case, the absolute
+minimum of moves is performed.)  $(LI Otherwise, if $(D s ==
+SwapStrategy.unstable && isBidirectionalRange!Range && hasLength!Range
+&& hasLvalueElements!Range), then elements are still moved from the
+end of the range, but time is spent on advancing between slots by repeated
+calls to $(D range.popFront).)  $(LI Otherwise, elements are moved
+incrementally towards the front of $(D range); a given element is never
+moved several times, but more elements are moved than in the previous
 cases.))
  */
 Range remove
 (SwapStrategy s = SwapStrategy.stable, Range, Offset...)
 (Range range, Offset offset)
 if (s != SwapStrategy.stable
-    && isBidirectionalRange!Range && hasLength!Range
+    && isBidirectionalRange!Range
+    && hasLvalueElements!Range
+    && hasLength!Range
     && Offset.length >= 1)
 {
     Tuple!(size_t, "pos", size_t, "len")[offset.length] blackouts;
@@ -8469,7 +8767,7 @@ if (s != SwapStrategy.stable
         // Look for a blackout on the right
         if (blackouts[right].pos + blackouts[right].len >= range.length)
         {
-            range.popBackN(blackouts[right].len);
+            range.popBackExactly(blackouts[right].len);
 
             // Since right is unsigned, we must check for this case, otherwise
             // we might turn it into size_t.max and the loop condition will not
@@ -8484,7 +8782,7 @@ if (s != SwapStrategy.stable
         }
         // Advance to next blackout on the left
         assert(blackouts[left].pos >= steps);
-        tgt.popFrontN(blackouts[left].pos - steps);
+        tgt.popFrontExactly(blackouts[left].pos - steps);
         steps = blackouts[left].pos;
         auto toMove = min(
             blackouts[left].len,
@@ -8511,7 +8809,10 @@ if (s != SwapStrategy.stable
 Range remove
 (SwapStrategy s = SwapStrategy.stable, Range, Offset...)
 (Range range, Offset offset)
-if (s == SwapStrategy.stable && isForwardRange!Range && Offset.length >= 1)
+if (s == SwapStrategy.stable
+    && isBidirectionalRange!Range
+    && hasLvalueElements!Range
+    && Offset.length >= 1)
 {
     import std.exception : enforce;
 
@@ -8540,14 +8841,14 @@ if (s == SwapStrategy.stable && isForwardRange!Range && Offset.length >= 1)
         }
         else
         {
-            src.popFrontN(from);
-            tgt.popFrontN(from);
+            src.popFrontExactly(from);
+            tgt.popFrontExactly(from);
             pos = from;
         }
         // now skip source to the "to" position
-        src.popFrontN(delta);
+        src.popFrontExactly(delta);
+        result.popBackExactly(delta);
         pos += delta;
-        foreach (j; 0 .. delta) result.popBack();
     }
     // leftover move
     moveAll(src, tgt);
@@ -8616,6 +8917,19 @@ unittest
     auto arr = [1,2,3];
     arr = arr.remove!(SwapStrategy.unstable)(2);
     assert(arr == [1,2]);
+
+}
+
+unittest
+{
+    // Bug# 12889
+    int[1][] arr = [[0], [1], [2], [3], [4], [5], [6]];
+    auto orig = arr.dup;
+    foreach (i; iota(arr.length))
+    {
+        assert(orig == arr.remove!(SwapStrategy.unstable)(tuple(i,i)));
+        assert(orig == arr.remove!(SwapStrategy.stable)(tuple(i,i)));
+    }
 }
 
 /**
@@ -8628,7 +8942,8 @@ order is preserved. Returns the filtered range.
 */
 Range remove(alias pred, SwapStrategy s = SwapStrategy.stable, Range)
 (Range range)
-if (isBidirectionalRange!Range)
+if (isBidirectionalRange!Range
+    && hasLvalueElements!Range)
 {
     auto result = range;
     static if (s != SwapStrategy.stable)
@@ -8667,8 +8982,20 @@ if (isBidirectionalRange!Range)
 ///
 unittest
 {
-    int[] a = [ 1, 2, 3, 2, 3, 4, 5, 2, 5, 6 ];
-    assert(remove!("a == 2")(a) == [ 1, 3, 3, 4, 5, 5, 6 ]);
+    static immutable base = [1, 2, 3, 2, 4, 2, 5, 2];
+
+    int[] arr = base[].dup;
+
+    // using a string-based predicate
+    assert(remove!("a == 2")(arr) == [ 1, 3, 4, 5 ]);
+
+    // The original array contents have been modified,
+    // so we need to reset it to its original state.
+    // The length is unmodified however.
+    arr[] = base[];
+
+    // using a lambda predicate
+    assert(remove!(a => a == 2)(arr) == [ 1, 3, 4, 5 ]);
 }
 
 unittest
@@ -9258,28 +9585,23 @@ sort(alias less = "a < b", SwapStrategy ss = SwapStrategy.unstable,
     alias LessRet = typeof(lessFun(r.front, r.front));    // instantiate lessFun
     static if (is(LessRet == bool))
     {
-        import std.conv : text;
-
         static if (ss == SwapStrategy.unstable)
-            quickSortImpl!(lessFun)(r, cast(real)r.length);
+            quickSortImpl!(lessFun)(r, r.length);
         else //use Tim Sort for semistable & stable
             TimSortImpl!(lessFun, Range).sort(r, null);
 
         enum maxLen = 8;
-        assert(isSorted!lessFun(r), text("Failed to sort range of type ",
-                        Range.stringof, ". Actual result is: ",
-                        r[0 .. r.length > maxLen ? maxLen : r.length ],
-                        r.length > maxLen ? "..." : ""));
+        assert(isSorted!lessFun(r), "Failed to sort range of type " ~ Range.stringof);
     }
     else
     {
-        static assert(false, "Invalid predicate passed to sort: "~less);
+        static assert(false, "Invalid predicate passed to sort: " ~ less.stringof);
     }
     return assumeSorted!less(r);
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     int[] array = [ 1, 2, 3, 4 ];
     // sort in descending order
@@ -9289,9 +9611,13 @@ unittest
     sort(array);
     assert(array == [ 1, 2, 3, 4 ]);
     // sort with a delegate
-    bool myComp(int x, int y) { return x > y; }
+    bool myComp(int x, int y) @safe pure nothrow { return x > y; }
     sort!(myComp)(array);
     assert(array == [ 4, 3, 2, 1 ]);
+}
+///
+unittest
+{
     // Showcase stable sorting
     string[] words = [ "aBc", "a", "abc", "b", "ABC", "c" ];
     sort!("toUpper(a) < toUpper(b)", SwapStrategy.stable)(words);
@@ -9618,7 +9944,7 @@ void swapAt(R)(R r, size_t i1, size_t i2)
     }
 }
 
-private void quickSortImpl(alias less, Range)(Range r, real depth)
+private void quickSortImpl(alias less, Range)(Range r, size_t depth)
 {
     alias Elem = ElementType!(Range);
     enum size_t optimisticInsertionSortGetsBetter = 25;
@@ -9627,12 +9953,12 @@ private void quickSortImpl(alias less, Range)(Range r, real depth)
     // partition
     while (r.length > optimisticInsertionSortGetsBetter)
     {
-        if(depth < 1.0)
+        if (depth == 0)
         {
             HeapSortImpl!(less, Range).heapSort(r);
             return;
         }
-        depth *= (2.0/3.0);
+        depth = depth >= depth.max / 2 ? (depth / 3) * 2 : (depth * 2) / 3;
 
         const pivotIdx = getPivot!(less)(r);
         auto pivot = r[pivotIdx];
@@ -9682,7 +10008,8 @@ private template HeapSortImpl(alias less, Range)
 
     alias lessFun = binaryFun!less;
 
-    void heapSort(Range r)
+    //template because of @@@12410@@@
+    void heapSort()(Range r)
     {
         // If true, there is nothing to do
         if(r.length < 2) return;
@@ -9701,7 +10028,8 @@ private template HeapSortImpl(alias less, Range)
         }
     }
 
-    void sift(Range r, size_t parent, immutable size_t end)
+    //template because of @@@12410@@@
+    void sift()(Range r, size_t parent, immutable size_t end)
     {
         immutable root = parent;
         size_t child = void;
@@ -10556,8 +10884,6 @@ less).
 */
 bool isSorted(alias less = "a < b", Range)(Range r) if (isForwardRange!(Range))
 {
-    import std.conv : text;
-
     if (r.empty) return true;
 
     static if (isRandomAccessRange!Range && hasLength!Range)
@@ -10568,10 +10894,8 @@ bool isSorted(alias less = "a < b", Range)(Range r) if (isForwardRange!(Range))
             if (!binaryFun!less(r[i + 1], r[i])) continue;
             assert(
                 !binaryFun!less(r[i], r[i + 1]),
-                text("Predicate for isSorted is not antisymmetric. Both",
-                        " pred(a, b) and pred(b, a) are true for a=", r[i],
-                        " and b=", r[i+1], " in positions ", i, " and ",
-                        i + 1));
+                "Predicate for isSorted is not antisymmetric. Both" ~
+                        " pred(a, b) and pred(b, a) are true for certain values.");
             return false;
         }
     }
@@ -10587,10 +10911,8 @@ bool isSorted(alias less = "a < b", Range)(Range r) if (isForwardRange!(Range))
             // Check for antisymmetric predicate
             assert(
                 !binaryFun!less(r.front, ahead.front),
-                text("Predicate for isSorted is not antisymmetric. Both",
-                        " pred(a, b) and pred(b, a) are true for a=", r.front,
-                        " and b=", ahead.front, " in positions ", i, " and ",
-                        i + 1));
+                "Predicate for isSorted is not antisymmetric. Both" ~
+                        " pred(a, b) and pred(b, a) are true for certain values.");
             return false;
         }
     }
@@ -11125,14 +11447,14 @@ unittest
 // canFind
 /++
 Convenience function. Like find, but only returns whether or not the search
-was succesful.
+was successful.
  +/
 template canFind(alias pred="a == b")
 {
     /++
     Returns $(D true) if and only if any value $(D v) found in the
     input range $(D range) satisfies the predicate $(D pred).
-    Performs (at most) $(BIGOH r.length) evaluations of $(D pred).
+    Performs (at most) $(BIGOH haystack.length) evaluations of $(D pred).
      +/
     bool canFind(Range)(Range haystack)
     if (is(typeof(find!pred(haystack))))
@@ -11141,8 +11463,8 @@ template canFind(alias pred="a == b")
     }
 
     /++
-    Returns $(D true) if and only if $(D value) can be found in $(D
-    range). Performs $(BIGOH needle.length) evaluations of $(D pred).
+    Returns $(D true) if and only if $(D needle) can be found in $(D
+    range). Performs $(BIGOH haystack.length) evaluations of $(D pred).
      +/
     bool canFind(Range, Element)(Range haystack, Element needle)
     if (is(typeof(find!pred(haystack, needle))))
@@ -11203,7 +11525,7 @@ unittest
 
 /++
 Checks if $(I _any) of the elements verifies $(D pred).
-$(D !any) can be used to verify that $(I none) of the elemnets verify
+$(D !any) can be used to verify that $(I none) of the elements verify
 $(D pred).
  +/
 template any(alias pred = "a")
@@ -11211,7 +11533,7 @@ template any(alias pred = "a")
     /++
     Returns $(D true) if and only if $(I _any) value $(D v) found in the
     input range $(D range) satisfies the predicate $(D pred).
-    Performs (at most) $(BIGOH r.length) evaluations of $(D pred).
+    Performs (at most) $(BIGOH range.length) evaluations of $(D pred).
      +/
     bool any(Range)(Range range)
     if (isInputRange!Range && is(typeof(unaryFun!pred(range.front))))
@@ -11264,7 +11586,7 @@ template all(alias pred = "a")
     /++
     Returns $(D true) if and only if $(I _all) values $(D v) found in the
     input range $(D range) satisfy the predicate $(D pred).
-    Performs (at most) $(BIGOH r.length) evaluations of $(D pred).
+    Performs (at most) $(BIGOH range.length) evaluations of $(D pred).
      +/
     bool all(Range)(Range range)
     if (isInputRange!Range && is(typeof(unaryFun!pred(range.front))))
@@ -12038,7 +12360,7 @@ $(D 7.0) is the correct answer because it occurs in $(D 4) out of the
 $(D 5) inputs, more than any other number. The second member of the
 resulting tuple is indeed $(D 4) (recording the number of occurrences
 of $(D 7.0)). If more of the top-frequent numbers are needed, just
-create a larger $(D tgt) range. In the axample above, creating $(D b)
+create a larger $(D tgt) range. In the example above, creating $(D b)
 with length $(D 2) yields $(D tuple(1.0, 3u)) in the second position.
 
 The function $(D largestPartialIntersection) is useful for
@@ -12634,15 +12956,15 @@ auto cartesianProduct(R1, R2)(R1 range1, R2 range2)
         else static assert(0, "cartesianProduct of infinite ranges requires "~
                               "forward ranges");
     }
-    else static if (isInputRange!R2 && isForwardRange!R1 && !isInfinite!R1)
-    {
-        return joiner(map!((ElementType!R2 a) => zip(range1.save, repeat(a)))
-                          (range2));
-    }
     else static if (isInputRange!R1 && isForwardRange!R2 && !isInfinite!R2)
     {
         return joiner(map!((ElementType!R1 a) => zip(repeat(a), range2.save))
                           (range1));
+    }
+    else static if (isInputRange!R2 && isForwardRange!R1 && !isInfinite!R1)
+    {
+        return joiner(map!((ElementType!R2 a) => zip(range1.save, repeat(a)))
+                          (range2));
     }
     else static assert(0, "cartesianProduct involving finite ranges must "~
                           "have at least one finite forward range");
@@ -12843,16 +13165,105 @@ unittest
 }
 
 /// ditto
-auto cartesianProduct(R1, R2, RR...)(R1 range1, R2 range2, RR otherRanges)
+auto cartesianProduct(RR...)(RR ranges)
+    if (ranges.length > 2 &&
+    	allSatisfy!(isForwardRange, RR) &&
+        !anySatisfy!(isInfinite, RR))
 {
-    import std.string : format;
+    // This overload uses a much less template-heavy implementation when
+    // all ranges are finite forward ranges, which is the most common use
+    // case, so that we don't run out of resources too quickly.
+    //
+    // For infinite ranges or non-forward ranges, we fall back to the old
+    // implementation which expands an exponential number of templates.
+    import std.typecons : tuple;
 
+    static struct Result
+    {
+        RR ranges;
+        RR current;
+        bool empty = true;
+
+        this(RR _ranges)
+        {
+            ranges = _ranges;
+            empty = false;
+            foreach (i, r; ranges)
+            {
+                current[i] = r.save;
+                if (current[i].empty)
+                    empty = true;
+            }
+        }
+        @property auto front()
+        {
+            return mixin(algoFormat("tuple(%(current[%d].front%|,%))",
+                                    iota(0, current.length)));
+        }
+        void popFront()
+        {
+            foreach_reverse (i, ref r; current)
+            {
+                r.popFront();
+                if (!r.empty) break;
+
+                static if (i==0)
+                    empty = true;
+                else
+                    r = ranges[i].save; // rollover
+            }
+        }
+        @property Result save()
+        {
+            Result copy;
+            foreach (i, r; ranges)
+            {
+                copy.ranges[i] = r.save;
+                copy.current[i] = current[i].save;
+            }
+            return copy;
+        }
+    }
+    static assert(isForwardRange!Result);
+
+    return Result(ranges);
+}
+
+unittest
+{
+    // Issue 10693: cartesian product of empty ranges should be empty.
+    int[] a, b, c, d, e;
+    auto cprod = cartesianProduct(a,b,c,d,e);
+    assert(cprod.empty);
+    foreach (_; cprod) {} // should not crash
+
+    // Test case where only one of the ranges is empty: the result should still
+    // be empty.
+    int[] p=[1], q=[];
+    auto cprod2 = cartesianProduct(p,p,p,q,p);
+    assert(cprod2.empty);
+    foreach (_; cprod2) {} // should not crash
+}
+
+unittest
+{
+    // .init value of cartesianProduct should be empty
+    auto cprod = cartesianProduct([0,0], [1,1], [2,2]);
+    assert(!cprod.empty);
+    assert(cprod.init.empty);
+}
+
+/// ditto
+auto cartesianProduct(R1, R2, RR...)(R1 range1, R2 range2, RR otherRanges)
+    if (!allSatisfy!(isForwardRange, R1, R2, RR) ||
+        anySatisfy!(isInfinite, R1, R2, RR))
+{
     /* We implement the n-ary cartesian product by recursively invoking the
      * binary cartesian product. To make the resulting range nicer, we denest
      * one level of tuples so that a ternary cartesian product, for example,
      * returns 3-element tuples instead of nested 2-element tuples.
      */
-    enum string denest = format("tuple(a[0], %(a[1][%d]%|,%))",
+    enum string denest = algoFormat("tuple(a[0], %(a[1][%d]%|,%))",
                                 iota(0, otherRanges.length+1));
     return map!denest(
         cartesianProduct(range1, cartesianProduct(range2, otherRanges))
@@ -12887,7 +13298,7 @@ unittest
     assert(canFind(N4, tuple(10, 31, 7, 12)));
 }
 
-///
+/// Issue 9878
 unittest
 {
     auto A = [ 1, 2, 3 ];
@@ -12896,16 +13307,29 @@ unittest
     auto ABC = cartesianProduct(A, B, C);
 
     assert(ABC.equal([
-        tuple(1, 'a', "x"), tuple(2, 'a', "x"), tuple(3, 'a', "x"),
-        tuple(1, 'b', "x"), tuple(2, 'b', "x"), tuple(3, 'b', "x"),
-        tuple(1, 'c', "x"), tuple(2, 'c', "x"), tuple(3, 'c', "x"),
-        tuple(1, 'a', "y"), tuple(2, 'a', "y"), tuple(3, 'a', "y"),
-        tuple(1, 'b', "y"), tuple(2, 'b', "y"), tuple(3, 'b', "y"),
-        tuple(1, 'c', "y"), tuple(2, 'c', "y"), tuple(3, 'c', "y"),
-        tuple(1, 'a', "z"), tuple(2, 'a', "z"), tuple(3, 'a', "z"),
-        tuple(1, 'b', "z"), tuple(2, 'b', "z"), tuple(3, 'b', "z"),
-        tuple(1, 'c', "z"), tuple(2, 'c', "z"), tuple(3, 'c', "z"),
+        tuple(1, 'a', "x"), tuple(1, 'a', "y"), tuple(1, 'a', "z"),
+        tuple(1, 'b', "x"), tuple(1, 'b', "y"), tuple(1, 'b', "z"),
+        tuple(1, 'c', "x"), tuple(1, 'c', "y"), tuple(1, 'c', "z"),
+        tuple(2, 'a', "x"), tuple(2, 'a', "y"), tuple(2, 'a', "z"),
+        tuple(2, 'b', "x"), tuple(2, 'b', "y"), tuple(2, 'b', "z"),
+        tuple(2, 'c', "x"), tuple(2, 'c', "y"), tuple(2, 'c', "z"),
+        tuple(3, 'a', "x"), tuple(3, 'a', "y"), tuple(3, 'a', "z"),
+        tuple(3, 'b', "x"), tuple(3, 'b', "y"), tuple(3, 'b', "z"),
+        tuple(3, 'c', "x"), tuple(3, 'c', "y"), tuple(3, 'c', "z")
     ]));
+}
+
+pure @safe nothrow @nogc unittest
+{
+    int[2] A = [1,2];
+    auto C = cartesianProduct(A[], A[], A[]);
+    assert(isForwardRange!(typeof(C)));
+
+    C.popFront();
+    auto front1 = C.front;
+    auto D = C.save;
+    C.popFront();
+    assert(D.front == front1);
 }
 
 /**

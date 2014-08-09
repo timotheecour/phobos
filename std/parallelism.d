@@ -144,7 +144,16 @@ else version(linux)
 
     shared static this()
     {
-        totalCPUs = cast(uint) sysconf(_SC_NPROCESSORS_ONLN );
+        totalCPUs = cast(uint) sysconf(_SC_NPROCESSORS_ONLN);
+    }
+}
+else version(Android)
+{
+    import core.sys.posix.unistd;
+
+    shared static this()
+    {
+        totalCPUs = cast(uint) sysconf(_SC_NPROCESSORS_ONLN);
     }
 }
 else version(useSysctlbyname)
@@ -207,15 +216,11 @@ private bool atomicCasUbyte(ref ubyte stuff, ubyte testVal, ubyte newVal)
 /*--------------------- Generic helper functions, etc.------------------------*/
 private template MapType(R, functions...)
 {
-    static if(functions.length == 0)
-    {
-        alias MapType = typeof(unaryFun!(functions[0])(ElementType!R.init));
-    }
-    else
-    {
-        alias MapType = typeof(adjoin!(staticMap!(unaryFun, functions))
-                     (ElementType!R.init));
-    }
+    static assert(functions.length);
+
+    ElementType!R e = void;
+    alias MapType =
+        typeof(adjoin!(staticMap!(unaryFun, functions))(e));
 }
 
 private template ReduceType(alias fun, R, E)
@@ -347,15 +352,6 @@ private template reduceFinish(functions...)
             return lhs;
         }
     }
-}
-
-private template isAssignable(T)
-{
-    enum isAssignable = is(typeof({
-        T a;
-        T b;
-        a = b;
-    }));
 }
 
 private template isRoundRobin(R : RoundRobinBuffer!(C1, C2), C1, C2)
@@ -1405,7 +1401,7 @@ private:
 public:
     // This is used in parallel_algorithm but is too unstable to document
     // as public API.
-    size_t defaultWorkUnitSize(size_t rangeLen) const pure nothrow @safe
+    size_t defaultWorkUnitSize(size_t rangeLen) const @safe pure nothrow
     {
         if(this.size == 0)
         {
@@ -1640,14 +1636,7 @@ public:
         auto amap(Args...)(Args args)
         if(isRandomAccessRange!(Args[0]))
         {
-            static if(functions.length == 1)
-            {
-                alias fun = unaryFun!(functions[0]);
-            }
-            else
-            {
-                alias fun = adjoin!(staticMap!(unaryFun, functions));
-            }
+            alias fun = adjoin!(staticMap!(unaryFun, functions));
 
             alias range = args[0];
             immutable len = range.length;
@@ -1731,9 +1720,21 @@ public:
 
                     immutable end = min(len, start + workUnitSize);
 
-                    foreach(i; start..end)
+                    static if (hasSlicing!R)
                     {
-                        buf[i] = fun(range[i]);
+                        auto subrange = range[start..end];
+                        foreach(i; start..end)
+                        {
+                            buf[i] = fun(subrange.front);
+                            subrange.popFront();
+                        }
+                    }
+                    else
+                    {
+                        foreach(i; start..end)
+                        {
+                            buf[i] = fun(range[i]);
+                        }
                     }
                 }
             }
@@ -1821,14 +1822,7 @@ public:
         {
             enforce(workUnitSize == size_t.max || workUnitSize <= bufSize,
                     "Work unit size must be smaller than buffer size.");
-            static if(functions.length == 1)
-            {
-                alias fun = unaryFun!(functions[0]);
-            }
-            else
-            {
-                alias fun = adjoin!(staticMap!(unaryFun, functions));
-            }
+            alias fun = adjoin!(staticMap!(unaryFun, functions));
 
             static final class Map
             {
@@ -1937,7 +1931,7 @@ public:
             {
                 size_t _length;
 
-                public @property size_t length() const pure nothrow @safe
+                public @property size_t length() const @safe pure nothrow
                 {
                     return _length;
                 }
@@ -2091,7 +2085,7 @@ public:
     Given a $(D source) range that is expensive to iterate over, returns an
     input range that asynchronously buffers the contents of
     $(D source) into a buffer of $(D bufSize) elements in a worker thread,
-    while making prevously buffered elements from a second buffer, also of size
+    while making previously buffered elements from a second buffer, also of size
     $(D bufSize), available via the range interface of the returned
     object.  The returned range has a length iff $(D hasLength!S).
     $(D asyncBuf) is useful, for example, when performing expensive operations
@@ -2104,7 +2098,7 @@ public:
     void main()
     {
         // Fetch lines of a file in a background thread
-        // while processing prevously fetched lines,
+        // while processing previously fetched lines,
         // dealing with byLine's buffer recycling by
         // eagerly duplicating every line.
         auto lines = File("foo.txt").byLine();
@@ -2153,7 +2147,7 @@ public:
                 size_t _length;
 
                 // Available if hasLength!S.
-                public @property size_t length() const pure nothrow @safe
+                public @property size_t length() const @safe pure nothrow
                 {
                     return _length;
                 }
@@ -2296,7 +2290,7 @@ public:
     Examples:
     ---
     // Fetch lines of a file in a background
-    // thread while processing prevously fetched
+    // thread while processing previously fetched
     // lines, without duplicating any lines.
     auto file = File("foo.txt");
 
@@ -2965,7 +2959,7 @@ public:
 
     The proper way to instantiate this object is to call
     $(D WorkerLocalStorage.toRange).  Once instantiated, this object behaves
-    as a finite random-access range with assignable, lvalue elemends and
+    as a finite random-access range with assignable, lvalue elements and
     a length equal to the number of worker threads in the $(D TaskPool) that
     created it plus 1.
      */
@@ -3078,7 +3072,7 @@ public:
     a call to $(D Task.workForce), $(D Task.yieldForce) or $(D Task.spinForce)
     causes them to be executed.
 
-    Use only if you have waitied on every $(D Task) and therefore know the
+    Use only if you have waited on every $(D Task) and therefore know the
     queue is empty, or if you speculatively executed some tasks and no longer
     need the results.
      */
@@ -3898,7 +3892,7 @@ private struct RoundRobinBuffer(C1, C2)
         primed = false;
     }
 
-    bool empty() @property const pure nothrow @safe
+    bool empty() @property const @safe pure nothrow
     {
         return _empty;
     }
@@ -4170,12 +4164,15 @@ unittest
            ));
 
     {
-        auto file = File("tempDelMe.txt", "wb");
+        import std.file : deleteme;
+
+        string temp_file = std.file.deleteme ~ "-tempDelMe.txt";
+        auto file = File(temp_file, "wb");
         scope(exit)
         {
             file.close();
             import std.file;
-            remove("tempDelMe.txt");
+            remove(temp_file);
         }
 
         auto written = [[1.0, 2, 3], [4.0, 5, 6], [7.0, 8, 9]];
@@ -4184,7 +4181,7 @@ unittest
             file.writeln(join(to!(string[])(row), "\t"));
         }
 
-        file = File("tempDelMe.txt");
+        file = File(temp_file);
 
         void next(ref char[] buf)
         {

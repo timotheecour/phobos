@@ -14,9 +14,7 @@ module std.array;
 
 import core.memory, core.bitop;
 import std.algorithm, std.ascii, std.conv, std.exception, std.functional,
-       std.range, std.string, std.traits, std.typecons, std.typetuple,
-       std.uni, std.utf;
-import std.c.string : memcpy;
+       std.range, std.string, std.traits, std.typecons, std.typetuple, std.utf;
 version(unittest) import core.exception, std.stdio;
 
 /**
@@ -28,6 +26,15 @@ a special case in an overload.
 ForeachType!Range[] array(Range)(Range r)
 if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)
 {
+    if (__ctfe)
+    {
+        // Compile-time version to avoid memcpy calls.
+        typeof(return) result;
+        foreach (e; r)
+            result ~= e;
+        return result;
+    }
+
     alias E = ForeachType!Range;
     static if (hasLength!Range)
     {
@@ -42,7 +49,7 @@ if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)
         size_t i;
         foreach (e; r)
         {
-            emplaceRef(result[i], e);
+            emplaceRef!E(result[i], e);
             ++i;
         }
         return cast(E[])result;
@@ -91,6 +98,20 @@ if (isIterable!Range && !isNarrowString!Range && !isInfinite!Range)
     }
     auto a = array([Foo(1), Foo(2), Foo(3), Foo(4), Foo(5)][]);
     assert(equal(a, [Foo(1), Foo(2), Foo(3), Foo(4), Foo(5)]));
+}
+
+unittest
+{
+    // Issue 12315
+    static struct Bug12315 { immutable int i; }
+    enum bug12315 = [Bug12315(123456789)].array();
+    static assert(bug12315[0].i == 123456789);
+}
+
+unittest
+{
+    static struct S{int* p;}
+    auto a = array(immutable(S).init.repeat(5));
 }
 
 /**
@@ -362,9 +383,9 @@ if (isDynamicArray!T && allSatisfy!(isIntegral, I))
     return arrayAllocImpl!(true, T, ST)(sizes);
 }
 
-@safe nothrow pure unittest
+@safe pure nothrow unittest
 {
-    minimallyInitializedArray!(int[][][][][])();
+    cast(void)minimallyInitializedArray!(int[][][][][])();
     double[] arr = minimallyInitializedArray!(double[])(100);
     assert(arr.length == 100);
 
@@ -545,7 +566,7 @@ Implements the range interface primitive $(D popFront) for built-in
 arrays. Due to the fact that nonmember functions can be called with
 the first argument using the dot notation, $(D array.popFront) is
 equivalent to $(D popFront(array)). For $(GLOSSARY narrow strings),
-$(D popFront) automaticaly advances to the next $(GLOSSARY code
+$(D popFront) automatically advances to the next $(GLOSSARY code
 point).
 */
 
@@ -643,7 +664,7 @@ Implements the range interface primitive $(D popBack) for built-in
 arrays. Due to the fact that nonmember functions can be called with
 the first argument using the dot notation, $(D array.popBack) is
 equivalent to $(D popBack(array)). For $(GLOSSARY narrow strings), $(D
-popFront) automaticaly eliminates the last $(GLOSSARY code point).
+popFront) automatically eliminates the last $(GLOSSARY code point).
 */
 
 void popBack(T)(ref T[] a) @safe pure nothrow
@@ -707,7 +728,7 @@ Implements the range interface primitive $(D front) for built-in
 arrays. Due to the fact that nonmember functions can be called with
 the first argument using the dot notation, $(D array.front) is
 equivalent to $(D front(array)). For $(GLOSSARY narrow strings), $(D
-front) automaticaly returns the first $(GLOSSARY code point) as a $(D
+front) automatically returns the first $(GLOSSARY code point) as a $(D
 dchar).
 */
 @property ref T front(T)(T[] a) @safe pure nothrow
@@ -750,7 +771,7 @@ Implements the range interface primitive $(D back) for built-in
 arrays. Due to the fact that nonmember functions can be called with
 the first argument using the dot notation, $(D array.back) is
 equivalent to $(D back(array)). For $(GLOSSARY narrow strings), $(D
-back) automaticaly returns the last $(GLOSSARY code point) as a $(D
+back) automatically returns the last $(GLOSSARY code point) as a $(D
 dchar).
 */
 @property ref T back(T)(T[] a) @safe pure nothrow if (!isNarrowString!(T[]))
@@ -1020,7 +1041,10 @@ void insertInPlace(T, U...)(ref T[] array, size_t pos, U stuff)
         {
             assert(src.length == dest.length);
             if (!__ctfe)
+            {
+                import core.stdc.string : memcpy;
                 memcpy(dest.ptr, src.ptr, src.length * T.sizeof);
+            }
             else
             {
                 dest[] = src[];
@@ -1042,13 +1066,13 @@ void insertInPlace(T, U...)(ref T[] array, size_t pos, U stuff)
         {
             static if (is(E : T)) //ditto
             {
-                emplaceRef(tmp[j++], stuff[i]);
+                emplaceRef!T(tmp[j++], stuff[i]);
             }
             else
             {
                 foreach (v; stuff[i])
                 {
-                    emplaceRef(tmp[j++], v);
+                    emplaceRef!T(tmp[j++], v);
                 }
             }
         }
@@ -1453,7 +1477,8 @@ if (isSomeString!S)
 
     foreach (i, dchar c ; s)
     {
-        if (std.uni.isWhite(c))
+        import std.uni : isWhite;
+        if (isWhite(c))
         {
             if (inword)
             {
@@ -1822,7 +1847,7 @@ if (isDynamicArray!(E[]) && isForwardRange!R1 && isForwardRange!R2
 
 /++
     Same as above, but outputs the result via OutputRange $(D sink).
-    If no match is found the original array is transfered to $(D sink) as is.
+    If no match is found the original array is transferred to $(D sink) as is.
 +/
 void replaceInto(E, Sink, R1, R2)(Sink sink, E[] subject, R1 from, R2 to)
 if (isOutputRange!(Sink, E) && isDynamicArray!(E[])
@@ -2025,7 +2050,8 @@ void replaceInPlace(T, Range)(ref T[] array, size_t from, size_t to, Range stuff
         // replacement reduces length
         immutable stuffEnd = from + stuff.length;
         array[from .. stuffEnd] = stuff[];
-        array = remove(array, tuple(stuffEnd, to));
+        if (stuffEnd < to)
+            array = remove(array, tuple(stuffEnd, to));
     }
     else
     {
@@ -2065,6 +2091,15 @@ unittest
     assert(a == [1, 3, 4, 5]);
     replaceInPlace(a, 1u, 3u, a[2 .. 4]);
     assert(a == [1, 4, 5, 5]);
+}
+
+unittest
+{
+    // Bug# 12889
+    int[1][] arr = [[0], [1], [2], [3], [4], [5], [6]];
+    int[1][] stuff = [[0], [1]];
+    replaceInPlace(arr, 4, 6, stuff);
+    assert(arr == [[0], [1], [2], [3], [0], [1], [6]]);
 }
 
 unittest
@@ -2242,12 +2277,15 @@ app2.put([ 4, 5, 6 ]);
 assert(app2.data == [ 1, 2, 3, 4, 5, 6 ]);
 ----
  */
-struct Appender(A : T[], T)
+struct Appender(A)
+if (isDynamicArray!A)
 {
+    private alias T = ElementEncodingType!A;
     private struct Data
     {
         size_t capacity;
         Unqual!T[] arr;
+        bool canExtend = false;
     }
 
     private Data* _data;
@@ -2258,11 +2296,11 @@ struct Appender(A : T[], T)
      * it will be used by the appender.  After initializing an appender on an array,
      * appending to the original array will reallocate.
      */
-    this(Unqual!T[] arr) @safe pure nothrow
+    this(T[] arr) @trusted pure nothrow
     {
         // initialize to a given array.
         _data = new Data;
-        _data.arr = arr;
+        _data.arr = cast(Unqual!T[])arr; //trusted
 
         if (__ctfe)
             return;
@@ -2270,12 +2308,31 @@ struct Appender(A : T[], T)
         // We want to use up as much of the block the array is in as possible.
         // if we consume all the block that we can, then array appending is
         // safe WRT built-in append, and we can use the entire block.
-        auto cap = ()@trusted{ return arr.capacity; }();
-        if (cap > arr.length)
-            arr = ()@trusted{ return arr.ptr[0 .. cap]; }();
-        // we assume no reallocation occurred
-        assert(arr.ptr is _data.arr.ptr);
+        // We only do this for mutable types that can be extended.
+        static if (isMutable!T && is(typeof(arr.length = size_t.max)))
+        {
+            auto cap = arr.capacity; //trusted
+            // Replace with "GC.setAttr( Not Appendable )" once pure (and fixed)
+            if (cap > arr.length)
+                arr.length = cap;
+        }
         _data.capacity = arr.length;
+    }
+
+    //Broken function. To be removed.
+    static if (is(T == immutable))
+    {
+        deprecated ("Using this constructor will break the type system. Please fix your code to use `Appender!(T[]).this(T[] arr)' directly.")
+        this(Unqual!T[] arr) pure nothrow
+        {
+            this(cast(T[]) arr);
+        }
+
+        //temporary: For resolving ambiguity:
+        this(typeof(null))
+        {
+            this(cast(T[]) null);
+        }
     }
 
     /**
@@ -2352,26 +2409,30 @@ struct Appender(A : T[], T)
             // have better access to the capacity field.
             auto newlen = appenderNewCapacity!(T.sizeof)(_data.capacity, reqlen);
             // first, try extending the current block
-            auto u = ()@trusted{ return
-                GC.extend(_data.arr.ptr, nelems * T.sizeof, (newlen - len) * T.sizeof);
-            }();
-            if (u)
+            if (_data.canExtend)
             {
-                // extend worked, update the capacity
-                _data.capacity = u / T.sizeof;
-            }
-            else
-            {
-                // didn't work, must reallocate
-                auto bi = ()@trusted{ return
-                    GC.qalloc(newlen * T.sizeof, (typeid(T[]).next.flags & 1) ? 0 : GC.BlkAttr.NO_SCAN);
+                auto u = ()@trusted{ return
+                    GC.extend(_data.arr.ptr, nelems * T.sizeof, (newlen - len) * T.sizeof);
                 }();
-                _data.capacity = bi.size / T.sizeof;
-                if (len)
-                    ()@trusted{ memcpy(bi.base, _data.arr.ptr, len * T.sizeof); }();
-                _data.arr = ()@trusted{ return (cast(Unqual!T*)bi.base)[0 .. len]; }();
-                // leave the old data, for safety reasons
+                if (u)
+                {
+                    // extend worked, update the capacity
+                    _data.capacity = u / T.sizeof;
+                    return;
+                }
             }
+
+            // didn't work, must reallocate
+            auto bi = ()@trusted{ return
+                GC.qalloc(newlen * T.sizeof, blockAttribute!T);
+            }();
+            _data.capacity = bi.size / T.sizeof;
+            import core.stdc.string : memcpy;
+            if (len)
+                ()@trusted{ memcpy(bi.base, _data.arr.ptr, len * T.sizeof); }();
+            _data.arr = ()@trusted{ return (cast(Unqual!T*)bi.base)[0 .. len]; }();
+            _data.canExtend = true;
+            // leave the old data, for safety reasons
         }
     }
 
@@ -2420,9 +2481,9 @@ struct Appender(A : T[], T)
             static if (is(Unqual!T == T))
                 alias uitem = item;
             else
-                auto ref uitem() @trusted nothrow @property { return cast(Unqual!T)item;}
+                auto ref uitem() @trusted nothrow @property { return cast(Unqual!T)item; }
 
-            emplaceRef(bigData[len], uitem);
+            emplaceRef!(Unqual!T)(bigData[len], uitem);
 
             //We do this at the end, in case of exceptions
             _data.arr = bigData;
@@ -2467,28 +2528,18 @@ struct Appender(A : T[], T)
             auto bigDataFun() @trusted nothrow { return _data.arr.ptr[0 .. newlen];}
             auto bigData = bigDataFun();
 
-            enum mustEmplace =  is(typeof(bigData[0].opAssign(cast(Unqual!T)items.front))) ||
-                               !is(typeof(bigData[0] = cast(Unqual!T)items.front));
+            alias UT = Unqual!T;
 
-            static if (is(typeof(_data.arr[] = items[])) && !mustEmplace)
+            static if (is(typeof(_data.arr[] = items[])) &&
+                !hasElaborateAssign!(Unqual!T) && isAssignable!(UT, ElementEncodingType!Range))
             {
-                //pragma(msg, T.stringof); pragma(msg, Range.stringof);
                 bigData[len .. newlen] = items[];
-            }
-            else static if (is(Unqual!T == ElementType!Range))
-            {
-                foreach (ref it ; bigData[len .. newlen])
-                {
-                    emplaceRef(it, items.front);
-                    items.popFront();
-                }
             }
             else
             {
-                static auto ref getUItem(U)(U item) @trusted {return cast(Unqual!T)item;}
                 foreach (ref it ; bigData[len .. newlen])
                 {
-                    emplaceRef(it, getUItem(items.front));
+                    emplaceRef!T(it, items.front);
                     items.popFront();
                 }
             }
@@ -2563,6 +2614,11 @@ struct Appender(A : T[], T)
                 enforce(newlength == 0);
         }
     }
+    else
+    {
+        /// Clear is not available for const/immutable data.
+        @disable void clear();
+    }
 }
 
 //Calculates an efficient growth scheme based on the old capacity
@@ -2587,11 +2643,13 @@ private size_t appenderNewCapacity(size_t TSizeOf)(size_t curLen, size_t reqLen)
  * underlying appender implementation.  Any calls made to the appender also update
  * the pointer to the original array passed in.
  */
-struct RefAppender(A : T[], T)
+struct RefAppender(A)
+if (isDynamicArray!A)
 {
     private
     {
-        Appender!(A, T) impl;
+        alias T = ElementEncodingType!A;
+        Appender!A impl;
         T[] *arr;
     }
 
@@ -2607,7 +2665,7 @@ struct RefAppender(A : T[], T)
      */
     this(T[] *arr)
     {
-        impl = Appender!(A, T)(*arr);
+        impl = Appender!A(*arr);
         this.arr = arr;
     }
 
@@ -2618,7 +2676,7 @@ struct RefAppender(A : T[], T)
         mixin("return impl." ~ fn ~ "(args);");
     }
 
-    private alias AppenderType = Appender!(A, T);
+    private alias AppenderType = Appender!A;
 
     /**
      * Appends one item to the managed array.
@@ -2668,24 +2726,18 @@ struct RefAppender(A : T[], T)
     Convenience function that returns an $(D Appender!A) object initialized
     with $(D array).
  +/
-Appender!(E[]) appender(A : E[], E)()
+Appender!A appender(A)()
+if (isDynamicArray!A)
 {
-    return Appender!(E[])(null);
+    return Appender!A(null);
 }
 /// ditto
-Appender!(E[]) appender(A : E[], E)(A array)
+Appender!(E[]) appender(A : E[], E)(auto ref A array)
 {
-    static if (isMutable!E)
-    {
-        return Appender!(E[])(array);
-    }
-    else
-    {
-        /* @system operation:
-         * - casting array to Unqual!E[] (remove qualifiers)
-         */
-        return Appender!(E[])(cast(Unqual!E[])array);
-    }
+    static assert (!isStaticArray!A || __traits(isRef, array),
+        "Cannot create Appender from an rvalue static array");
+
+    return Appender!(E[])(array);
 }
 
 @safe pure nothrow unittest
@@ -2796,8 +2848,8 @@ Appender!(E[]) appender(A : E[], E)(A array)
     {
         auto w = appender!string();
         w.reserve(4);
-        w.capacity;
-        w.data;
+        cast(void)w.capacity;
+        cast(void)w.data;
         try
         {
             wchar wc = 'a';
@@ -2810,8 +2862,8 @@ Appender!(E[]) appender(A : E[], E)(A array)
     {
         auto w = appender!(int[])();
         w.reserve(4);
-        w.capacity;
-        w.data;
+        cast(void)w.capacity;
+        cast(void)w.data;
         w.put(10);
         w.put([10]);
         w.clear();
@@ -2903,7 +2955,8 @@ unittest
 }
 
 unittest
-{ //9528
+{
+    //9528
     const(E)[] fastCopy(E)(E[] src) {
             auto app = appender!(const(E)[])();
             foreach (i, e; src)
@@ -2919,15 +2972,124 @@ unittest
 }
 
 unittest
-{ //10753
+{
+    //10753
     struct Foo {
        immutable dchar d;
     }
     struct Bar {
        immutable int x;
     }
-   "12".map!Foo.array;
-   [1, 2].map!Bar.array;
+    "12".map!Foo.array;
+    [1, 2].map!Bar.array;
+}
+
+unittest
+{
+    //New appender signature tests
+    alias mutARR = int[];
+    alias conARR = const(int)[];
+    alias immARR = immutable(int)[];
+
+    mutARR mut;
+    conARR con;
+    immARR imm;
+
+    {auto app = Appender!mutARR(mut);}                //Always worked. Should work. Should not create a warning.
+    static assert(!is(typeof(Appender!mutARR(con)))); //Never worked.  Should not work.
+    static assert(!is(typeof(Appender!mutARR(imm)))); //Never worked.  Should not work.
+
+    {auto app = Appender!conARR(mut);} //Always worked. Should work. Should not create a warning.
+    {auto app = Appender!conARR(con);} //Didn't work.   Now works.   Should not create a warning.
+    {auto app = Appender!conARR(imm);} //Didn't work.   Now works.   Should not create a warning.
+
+    //{auto app = Appender!immARR(mut);}                //Worked. Will cease to work. Creates warning.
+    //static assert(!is(typeof(Appender!immARR(mut)))); //Worked. Will cease to work. Uncomment me after full deprecation.
+    static assert(!is(typeof(Appender!immARR(con))));   //Never worked. Should not work.
+    {auto app = Appender!immARR(imm);}                  //Didn't work.  Now works. Should not create a warning.
+
+    //Deprecated. Please uncomment and make sure this doesn't work:
+    //char[] cc;
+    //static assert(!is(typeof(Appender!string(cc))));
+
+    //This should always work:
+    {auto app = appender!string(null);}
+    {auto app = appender!(const(char)[])(null);}
+    {auto app = appender!(char[])(null);}
+}
+
+unittest //Test large allocations (for GC.extend)
+{
+    Appender!(char[]) app;
+    app.reserve(1); //cover reserve on non-initialized
+    foreach(_; 0 .. 100_000)
+        app.put('a');
+    assert(equal(app.data, 'a'.repeat(100_000)));
+}
+
+unittest
+{
+    auto reference = new ubyte[](2048 + 1); //a number big enough to have a full page (EG: the GC extends)
+    auto arr = reference.dup;
+    auto app = appender(arr[0 .. 0]);
+    app.reserve(1); //This should not trigger a call to extend
+    app.put(ubyte(1)); //Don't clobber arr
+    assert(reference[] == arr[]);
+}
+
+unittest // check against .clear UFCS hijacking
+{
+    Appender!string app;
+    static assert(!__traits(compiles, app.clear()));
+    static assert(__traits(compiles, clear(app)),
+        "Remove me when object.clear is removed!");
+}
+
+unittest
+{
+    static struct D//dynamic
+    {
+        int[] i;
+        alias i this;
+    }
+    static struct S//static
+    {
+        int[5] i;
+        alias i this;
+    }
+    static assert(!is(Appender!(char[5])));
+    static assert(!is(Appender!D));
+    static assert(!is(Appender!S));
+
+    enum int[5] a = [];
+    int[5] b;
+    D d;
+    S s;
+    int[5] foo(){return a;}
+
+    static assert(!is(typeof(appender(a))));
+    static assert( is(typeof(appender(b))));
+    static assert( is(typeof(appender(d))));
+    static assert( is(typeof(appender(s))));
+    static assert(!is(typeof(appender(foo()))));
+}
+
+unittest
+{
+    // Issue 13077
+    static class A {}
+
+    // reduced case
+    auto w = appender!(shared(A)[])();
+    w.put(new shared A());
+
+    // original case
+    import std.range;
+    InputRange!(shared A) foo()
+    {
+        return [new shared A].inputRangeObject;
+    }
+    auto res = foo.array;
 }
 
 /++
@@ -3000,6 +3162,20 @@ unittest
     short[] range = [1, 2, 3];
     app.put(range);
     assert(app.data == [1, 2, 3]);
+}
+
+unittest
+{
+    string s = "hello".idup;
+    char[] a = "hello".dup;
+    auto appS = appender(s);
+    auto appA = appender(a);
+    put(appS, 'w');
+    put(appA, 'w');
+    s ~= 'a'; //Clobbers here?
+    a ~= 'a'; //Clobbers here?
+    assert(appS.data == "hellow");
+    assert(appA.data == "hellow");
 }
 
 /*

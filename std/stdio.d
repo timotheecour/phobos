@@ -17,6 +17,7 @@ Authors:   $(WEB digitalmars.com, Walter Bright),
 module std.stdio;
 
 public import core.stdc.stdio, std.string : KeepTerminator;
+import core.vararg;
 static import std.c.stdio;
 import std.stdiobase;
 import core.stdc.errno, core.stdc.stddef, core.stdc.stdlib, core.memory,
@@ -62,6 +63,11 @@ version (FreeBSD)
     version = GENERIC_IO;
 }
 
+version (Android)
+{
+    version = GENERIC_IO;
+}
+
 version(Windows)
 {
     // core.stdc.stdio.fopen expects file names to be
@@ -82,6 +88,8 @@ version (DIGITAL_MARS_STDIO)
          * Use _iobuf* for the unshared version of FILE*,
          * usable when the FILE is locked.
          */
+      nothrow:
+      @nogc:
         int _fputc_nlock(int, _iobuf*);
         int _fputwc_nlock(int, _iobuf*);
         int _fgetc_nlock(_iobuf*);
@@ -111,6 +119,8 @@ else version (MICROSOFT_STDIO)
         /* **
          * Microsoft under-the-hood C I/O functions
          */
+      nothrow:
+      @nogc:
         int _fputc_nolock(int, _iobuf*);
         int _fputwc_nolock(int, _iobuf*);
         int _fgetc_nolock(_iobuf*);
@@ -145,6 +155,8 @@ else version (GCC_IO)
      */
     extern (C)
     {
+      nothrow:
+      @nogc:
         int fputc_unlocked(int, _iobuf*);
         int fputwc_unlocked(wchar_t, _iobuf*);
         int fgetc_unlocked(_iobuf*);
@@ -168,6 +180,9 @@ else version (GCC_IO)
 }
 else version (GENERIC_IO)
 {
+    nothrow:
+    @nogc:
+
     extern (C)
     {
         void flockfile(FILE*);
@@ -318,7 +333,7 @@ struct File
     private Impl* _p;
     private string _name;
 
-    package this(FILE* handle, string name, uint refs = 1, bool isPopened = false)
+    package this(FILE* handle, string name, uint refs = 1, bool isPopened = false) @trusted
     {
         import std.exception : enforce;
 
@@ -344,7 +359,7 @@ object refers to it anymore.
 
 Throws: $(D ErrnoException) if the file could not be opened.
  */
-    this(string name, in char[] stdioOpenmode = "rb")
+    this(string name, in char[] stdioOpenmode = "rb") @safe
     {
         import std.conv : text;
         import std.exception : errnoEnforce;
@@ -355,12 +370,12 @@ Throws: $(D ErrnoException) if the file could not be opened.
                 name);
     }
 
-    ~this()
+    ~this() @safe
     {
         detach();
     }
 
-    this(this)
+    this(this) @safe
     {
         if (!_p) return;
         assert(_p.refs);
@@ -372,7 +387,7 @@ Assigns a file to another. The target of the assignment gets detached
 from whatever file it was attached to, and attaches itself to the new
 file.
  */
-    void opAssign(File rhs)
+    void opAssign(File rhs) @safe
     {
         import std.algorithm : swap;
 
@@ -387,7 +402,7 @@ cplusplus.com/reference/clibrary/cstdio/fopen.html, fopen) function.
 
 Throws: $(D ErrnoException) in case of error.
  */
-    void open(string name, in char[] stdioOpenmode = "rb")
+    void open(string name, in char[] stdioOpenmode = "rb") @safe
     {
         detach();
         this = File(name, stdioOpenmode);
@@ -400,7 +415,7 @@ opengroup.org/onlinepubs/007908799/xsh/_popen.html, _popen).
 
 Throws: $(D ErrnoException) in case of error.
  */
-    version(Posix) void popen(string command, in char[] stdioOpenmode = "r")
+    version(Posix) void popen(string command, in char[] stdioOpenmode = "r") @safe
     {
         import std.exception : errnoEnforce;
 
@@ -417,12 +432,12 @@ be compatible with the mode of the file descriptor.
 
 Throws: $(D ErrnoException) in case of error.
  */
-    void fdopen(int fd, in char[] stdioOpenmode = "rb")
+    void fdopen(int fd, in char[] stdioOpenmode = "rb") @safe
     {
         fdopen(fd, stdioOpenmode, null);
     }
 
-    package void fdopen(int fd, in char[] stdioOpenmode, string name)
+    package void fdopen(int fd, in char[] stdioOpenmode, string name) @trusted
     {
         import std.string : toStringz;
         import std.exception : errnoEnforce;
@@ -503,7 +518,7 @@ Throws: $(D ErrnoException) in case of error.
 
 
 /** Returns $(D true) if the file is opened. */
-    @property bool isOpen() const pure nothrow
+    @property bool isOpen() const @safe pure nothrow
     {
         return _p !is null && _p.handle;
     }
@@ -514,7 +529,7 @@ cplusplus.com/reference/clibrary/cstdio/feof.html, feof)).
 
 Throws: $(D Exception) if the file is not opened.
  */
-    @property bool eof() const pure
+    @property bool eof() const @trusted pure
     {
         import std.exception : enforce;
 
@@ -525,7 +540,7 @@ Throws: $(D Exception) if the file is not opened.
 /** Returns the name of the last opened file, if any.
 If a $(D File) was created with $(LREF tmpfile) and $(LREF wrapFile)
 it has no name.*/
-    @property string name() const pure nothrow
+    @property string name() const @safe pure nothrow
     {
         return _name;
     }
@@ -535,9 +550,21 @@ If the file is not opened, returns $(D false). Otherwise, returns
 $(WEB cplusplus.com/reference/clibrary/cstdio/ferror.html, ferror) for
 the file handle.
  */
-    @property bool error() const pure nothrow
+    @property bool error() const @trusted pure nothrow
     {
-        return !_p.handle || .ferror(cast(FILE*) _p.handle);
+        return !isOpen || .ferror(cast(FILE*) _p.handle);
+    }
+
+    @safe unittest
+    {
+        // Issue 12349
+        static import std.file;
+        auto deleteme = testFilename();
+        auto f = File(deleteme, "w");
+        scope(exit) std.file.remove(deleteme);
+
+        f.close();
+        assert(f.error);
     }
 
 /**
@@ -545,7 +572,7 @@ Detaches from the underlying file. If the sole owner, calls $(D close).
 
 Throws: $(D ErrnoException) on failure if closing the file.
   */
-    void detach()
+    void detach() @safe
     {
         if (!_p) return;
         if (_p.refs == 1)
@@ -558,7 +585,7 @@ Throws: $(D ErrnoException) on failure if closing the file.
         }
     }
 
-    unittest
+    @safe unittest
     {
         static import std.file;
 
@@ -584,7 +611,7 @@ referring to the same handle will see a closed file henceforth.
 
 Throws: $(D ErrnoException) on error.
  */
-    void close()
+    void close() @trusted
     {
         import std.exception : errnoEnforce;
 
@@ -622,7 +649,7 @@ If the file is not opened, succeeds vacuously. Otherwise, returns
 $(WEB cplusplus.com/reference/clibrary/cstdio/_clearerr.html,
 _clearerr) for the file handle.
  */
-    void clearerr() pure nothrow
+    void clearerr() @safe pure nothrow
     {
         _p is null || _p.handle is null ||
         .clearerr(_p.handle);
@@ -634,13 +661,26 @@ for the file handle.
 
 Throws: $(D Exception) if the file is not opened or if the call to $(D fflush) fails.
  */
-    void flush()
+    void flush() @trusted
     {
         import std.exception : enforce, errnoEnforce;
 
-        errnoEnforce
-        (.fflush(enforce(_p.handle, "Calling fflush() on an unopened file"))
-                == 0);
+        enforce(isOpen, "Attempting to flush() in an unopened file");
+        errnoEnforce(.fflush(_p.handle) == 0);
+    }
+
+    @safe unittest
+    {
+        // Issue 12349
+        static import std.file;
+        import std.exception: assertThrown;
+
+        auto deleteme = testFilename();
+        auto f = File(deleteme, "w");
+        scope(exit) std.file.remove(deleteme);
+
+        f.close();
+        assertThrown(f.flush());
     }
 
 /**
@@ -662,16 +702,18 @@ $(D rawRead) always reads in binary mode on Windows.
         import std.exception : enforce, errnoEnforce;
 
         enforce(buffer.length, "rawRead must take a non-empty buffer");
-        version(Win32)
+        version(Windows)
         {
             immutable fd = ._fileno(_p.handle);
             immutable mode = ._setmode(fd, _O_BINARY);
             scope(exit) ._setmode(fd, mode);
             version(DIGITAL_MARS_STDIO)
             {
+                import core.atomic;
+
                 // @@@BUG@@@ 4243
                 immutable info = __fhnd_info[fd];
-                __fhnd_info[fd] &= ~FHND_TEXT;
+                atomicOp!"&="(__fhnd_info[fd], ~FHND_TEXT);
                 scope(exit) __fhnd_info[fd] = info;
             }
         }
@@ -721,9 +763,11 @@ Throws: $(D ErrnoException) if the file is not opened or if the call to $(D fwri
             scope(exit) ._setmode(fd, mode);
             version(DIGITAL_MARS_STDIO)
             {
+                import core.atomic;
+
                 // @@@BUG@@@ 4243
                 immutable info = __fhnd_info[fd];
-                __fhnd_info[fd] &= ~FHND_TEXT;
+                atomicOp!"&="(__fhnd_info[fd], ~FHND_TEXT);
                 scope(exit) __fhnd_info[fd] = info;
             }
             scope(exit) flush(); // before restoring translation mode
@@ -737,7 +781,6 @@ Throws: $(D ErrnoException) if the file is not opened or if the call to $(D fwri
                         _name, "'"));
     }
 
-    version(Win64) {} else
     unittest
     {
         static import std.file;
@@ -757,7 +800,7 @@ for the file handle.
 Throws: $(D Exception) if the file is not opened.
         $(D ErrnoException) if the call to $(D fseek) fails.
  */
-    void seek(long offset, int origin = SEEK_SET)
+    void seek(long offset, int origin = SEEK_SET) @trusted
     {
         import std.exception : enforce, errnoEnforce;
         import std.conv : to, text;
@@ -771,12 +814,11 @@ Throws: $(D Exception) if the file is not opened.
         else
         {
             //static assert(off_t.sizeof == 8);
-            errnoEnforce(fseeko(_p.handle, offset, origin) == 0,
+            errnoEnforce(fseeko(_p.handle, cast(off_t) offset, origin) == 0,
                     "Could not seek in file `"~_name~"'");
         }
     }
 
-    version(Win64) {} else
     unittest
     {
         static import std.file;
@@ -795,7 +837,10 @@ Throws: $(D Exception) if the file is not opened.
         {
             import std.conv : text;
 
-            auto bigOffset = cast(ulong) int.max + 100;
+            version (Android)
+                auto bigOffset = int.max - 100;
+            else
+                auto bigOffset = cast(ulong) int.max + 100;
             f.seek(bigOffset);
             assert(f.tell == bigOffset, text(f.tell));
             // Uncomment the tests below only if you want to wait for
@@ -813,7 +858,7 @@ managed file handle.
 Throws: $(D Exception) if the file is not opened.
         $(D ErrnoException) if the call to $(D ftell) fails.
  */
-    @property ulong tell() const
+    @property ulong tell() const @trusted
     {
         import std.exception : enforce, errnoEnforce;
 
@@ -851,7 +896,7 @@ for the file handle.
 
 Throws: $(D Exception) if the file is not opened.
  */
-    void rewind()
+    void rewind() @safe
     {
         import std.exception : enforce;
 
@@ -866,7 +911,7 @@ the file handle.
 Throws: $(D Exception) if the file is not opened.
         $(D ErrnoException) if the call to $(D setvbuf) fails.
  */
-    void setvbuf(size_t size, int mode = _IOFBF)
+    void setvbuf(size_t size, int mode = _IOFBF) @trusted
     {
         import std.exception : enforce, errnoEnforce;
 
@@ -882,7 +927,7 @@ _setvbuf) for the file handle.
 Throws: $(D Exception) if the file is not opened.
         $(D ErrnoException) if the call to $(D setvbuf) fails.
 */
-    void setvbuf(void[] buf, int mode = _IOFBF)
+    void setvbuf(void[] buf, int mode = _IOFBF) @trusted
     {
         import std.exception : enforce, errnoEnforce;
 
@@ -1212,7 +1257,10 @@ better performance as it can reuse its read buffer.
 
 Params:
     S = Template parameter; the type of the allocated buffer, and the type returned. Defaults to $(D string).
-    terminator = line terminator (by default, '\n')
+    terminator = Line terminator (by default, $(D '\n')).
+
+Note:
+    String terminators are not supported due to ambiguity with readln(buf) below.
 
 Returns:
     The line that was read, including the line terminator character.
@@ -1292,9 +1340,11 @@ the buffer for each call. Note that reusing the buffer means that you
 must copy the previous contents if you wish to retain them.
 
 Params:
-buf = buffer used to store the resulting line data. buf is
+buf = Buffer used to store the resulting line data. buf is
 resized as necessary.
-terminator = line terminator (by default, '\n')
+terminator = Line terminator (by default, $(D '\n')). Use
+$(XREF ascii, newline) for portability (unless the file was opened in 
+text mode).
 
 Returns:
 0 for end of file, otherwise number of characters read
@@ -1420,19 +1470,26 @@ for every line.
         static import std.file;
 
         auto deleteme = testFilename();
-        std.file.write(deleteme, "hello\nworld\n");
+        std.file.write(deleteme, "hello\nworld\ntrue\nfalse\n");
         scope(exit) std.file.remove(deleteme);
         string s;
         auto f = File(deleteme);
         f.readf("%s\n", &s);
         assert(s == "hello", "["~s~"]");
+        f.readf("%s\n", &s);
+        assert(s == "world", "["~s~"]");
+
+        // Issue 11698
+        bool b1, b2;
+        f.readf("%s\n%s\n", &b1, &b2);
+        assert(b1 == true && b2 == false);
     }
 
 /**
  Returns a temporary file by calling $(WEB
  cplusplus.com/reference/clibrary/cstdio/_tmpfile.html, _tmpfile).
  Note that the created file has no $(LREF name).*/
-    static File tmpfile()
+    static File tmpfile() @safe
     {
         import std.exception : errnoEnforce;
 
@@ -1445,7 +1502,7 @@ for every line.
 Unsafe function that wraps an existing $(D FILE*). The resulting $(D
 File) never takes the initiative in closing the file.
 Note that the created file has no $(LREF name)*/
-    /*private*/ static File wrapFile(FILE* f)
+    /*private*/ static File wrapFile(FILE* f) @safe
     {
         import std.exception : enforce;
 
@@ -1456,7 +1513,7 @@ Note that the created file has no $(LREF name)*/
 /**
 Returns the $(D FILE*) corresponding to this object.
  */
-    FILE* getFP() pure
+    FILE* getFP() @safe pure
     {
         import std.exception : enforce;
 
@@ -1473,7 +1530,7 @@ Returns the $(D FILE*) corresponding to this object.
 /**
 Returns the file number corresponding to this object.
  */
-    /*version(Posix) */int fileno() const
+    /*version(Posix) */int fileno() const @trusted
     {
         import std.exception : enforce;
 
@@ -1628,13 +1685,17 @@ may throw $(D StdioException) on I/O error.
 Note:
 Each $(D front) will not persist after $(D
 popFront) is called, so the caller must copy its contents (e.g. by
-calling $(D to!string)) if retention is needed.
+calling $(D to!string)) when retention is needed. If the caller needs
+to retain a copy of every line, use the $(LREF byLineCopy) function
+instead.
 
 Params:
 Char = Character type for each line, defaulting to $(D char).
 keepTerminator = Use $(D KeepTerminator.yes) to include the
 terminator at the end of each line.
-terminator = Line separator ($(D '\n') by default).
+terminator = Line separator ($(D '\n') by default). Use
+$(XREF ascii, newline) for portability (unless the file was opened in 
+text mode).
 
 Example:
 ----
@@ -1675,7 +1736,7 @@ $(D front) after the corresponding $(D popFront) call is made (because
 the contents may well have changed).
 */
     auto byLine(Terminator = char, Char = char)
-    (KeepTerminator keepTerminator = KeepTerminator.no,
+            (KeepTerminator keepTerminator = KeepTerminator.no,
             Terminator terminator = '\n')
     if (isScalarType!Terminator)
     {
@@ -1684,16 +1745,141 @@ the contents may well have changed).
 
 /// ditto
     auto byLine(Terminator, Char = char)
-    (KeepTerminator keepTerminator, Terminator terminator)
+            (KeepTerminator keepTerminator, Terminator terminator)
     if (is(Unqual!(ElementEncodingType!Terminator) == Char))
     {
         return ByLine!(Char, Terminator)(this, keepTerminator, terminator);
     }
 
+    private struct ByLineCopy(Char, Terminator)
+    {
+    private:
+        import std.typecons;
+
+        /* Ref-counting stops the source range's ByLineCopyImpl
+         * from getting out of sync after the range is copied, e.g.
+         * when accessing range.front, then using std.range.take,
+         * then accessing range.front again. */
+        alias Impl = RefCounted!(ByLineCopyImpl!(Char, Terminator),
+            RefCountedAutoInitialize.no);
+        Impl impl;
+
+    public:
+        this(File f, KeepTerminator kt, Terminator terminator)
+        {
+            impl = Impl(f, kt, terminator);
+        }
+
+        @property bool empty()
+        {
+            return impl.refCountedPayload.empty;
+        }
+
+        @property Char[] front()
+        {
+            return impl.refCountedPayload.front;
+        }
+
+        void popFront()
+        {
+            impl.refCountedPayload.popFront();
+        }
+    }
+
+    private struct ByLineCopyImpl(Char, Terminator)
+    {
+        ByLineImpl!(Unqual!Char, Terminator) impl;
+        bool gotFront;
+        Char[] line;
+
+    public:
+        this(File f, KeepTerminator kt, Terminator terminator)
+        {
+            impl = ByLineImpl!(Unqual!Char, Terminator)(f, kt, terminator);
+        }
+
+        @property bool empty()
+        {
+            return impl.empty;
+        }
+
+        @property front()
+        {
+            if (!gotFront)
+            {
+                line = impl.front.dup;
+                gotFront = true;
+            }
+            return line;
+        }
+
+        void popFront()
+        {
+            impl.popFront();
+            gotFront = false;
+        }
+    }
+
+/**
+Returns an input range set up to read from the file handle one line
+at a time. Each line will be newly allocated.
+
+The element type for the range will be $(D Char[]). Range
+primitives may throw $(D StdioException) on I/O error.
+
+Params:
+Char = Character type for each line, defaulting to $(D immutable char).
+keepTerminator = Use $(D KeepTerminator.yes) to include the
+terminator at the end of each line.
+terminator = Line separator ($(D '\n') by default). Use
+$(XREF ascii, newline) for portability (unless the file was opened in 
+text mode).
+
+Example:
+----
+import std.algorithm, std.stdio;
+// Print sorted lines of a file.
+void main()
+{
+    auto sortedLines = File("file.txt")   // Open for reading
+                       .byLineCopy()      // Read persistent lines
+                       .array()           // into an array
+                       .sort();           // then sort them
+    foreach (line; sortedLines)
+        writeln(line);
+}
+----
+See_Also:
+$(XREF file,readText)
+*/
+    auto byLineCopy(Terminator = char, Char = immutable char)
+            (KeepTerminator keepTerminator = KeepTerminator.no,
+            Terminator terminator = '\n')
+    if (isScalarType!Terminator)
+    {
+        return ByLineCopy!(Char, Terminator)(this, keepTerminator, terminator);
+    }
+
+/// ditto
+    auto byLineCopy(Terminator, Char = immutable char)
+            (KeepTerminator keepTerminator, Terminator terminator)
+    if (is(Unqual!(ElementEncodingType!Terminator) == Unqual!Char))
+    {
+        return ByLineCopy!(Char, Terminator)(this, keepTerminator, terminator);
+    }
+
+    unittest
+    {
+        static assert(is(typeof(File("").byLine.front) == char[]));
+        static assert(is(typeof(File("").byLineCopy.front) == string));
+        static assert(
+            is(typeof(File("").byLineCopy!(char, char).front) == char[]));
+    }
+
     unittest
     {
         static import std.file;
-        import std.algorithm : take, equal;
+        import std.algorithm : equal;
 
         //printf("Entering test at line %d\n", __LINE__);
         scope(failure) printf("Failed test at line %d\n", __LINE__);
@@ -1710,10 +1896,11 @@ the contents may well have changed).
         f.detach();
         assert(!f.isOpen);
 
-        void testTerm(Terminator)(string txt, string[] witness,
-                KeepTerminator kt, Terminator term, bool popFirstLine)
+        void test(Terminator)(string txt, in string[] witness,
+                KeepTerminator kt, Terminator term, bool popFirstLine = false)
         {
             import std.conv : text;
+            import std.algorithm : sort;
 
             uint i;
             std.file.write(deleteme, txt);
@@ -1737,40 +1924,62 @@ the contents may well have changed).
             assert(i == witness.length, text(i, " != ", witness.length));
 
             // Issue 11830
-            auto walkedLength = File(deleteme).byLine.walkLength;
+            auto walkedLength = File(deleteme).byLine(kt, term).walkLength;
             assert(walkedLength == witness.length, text(walkedLength, " != ", witness.length));
+
+            // test persistent lines
+            assert(File(deleteme).byLineCopy(kt, term).array.sort() == witness.dup.sort());
         }
-        /* Wrap with default args.
-         * Note: Having a default argument for terminator = '\n' would prevent
-         * instantiating Terminator=string (or "\n" would prevent Terminator=char) */
-        void test(string txt, string[] witness,
-                KeepTerminator kt = KeepTerminator.no,
-                bool popFirstLine = false)
+
+        KeepTerminator kt = KeepTerminator.no;
+        test("", null, kt, '\n');
+        test("\n", [ "" ], kt, '\n');
+        test("asd\ndef\nasdf", [ "asd", "def", "asdf" ], kt, '\n');
+        test("asd\ndef\nasdf", [ "asd", "def", "asdf" ], kt, '\n', true);
+        test("asd\ndef\nasdf\n", [ "asd", "def", "asdf" ], kt, '\n');
+        test("foo", [ "foo" ], kt, '\n', true);
+        test("bob\r\nmarge\r\nsteve\r\n", ["bob", "marge", "steve"],
+            kt, "\r\n");
+        test("sue\r", ["sue"], kt, '\r');
+
+        kt = KeepTerminator.yes;
+        test("", null, kt, '\n');
+        test("\n", [ "\n" ], kt, '\n');
+        test("asd\ndef\nasdf", [ "asd\n", "def\n", "asdf" ], kt, '\n');
+        test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], kt, '\n');
+        test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], kt, '\n', true);
+        test("foo", [ "foo" ], kt, '\n');
+        test("bob\r\nmarge\r\nsteve\r\n", ["bob\r\n", "marge\r\n", "steve\r\n"],
+            kt, "\r\n");
+        test("sue\r", ["sue\r"], kt, '\r');
+    }
+
+    unittest
+    {
+        import std.algorithm : equal;
+
+        version(Win64)
         {
-            testTerm(txt, witness, kt, '\n', popFirstLine);
+            static import std.file;
+
+            /* the C function tmpfile doesn't seem to work, even when called from C */
+            auto deleteme = testFilename();
+            auto file = File(deleteme, "w+");
+            scope(success) std.file.remove(deleteme);
         }
+        else version(Android)
+        {
+            static import std.file;
 
-        test("", null);
-        test("\n", [ "" ]);
-        test("asd\ndef\nasdf", [ "asd", "def", "asdf" ]);
-        test("asd\ndef\nasdf", [ "asd", "def", "asdf" ], KeepTerminator.no, true);
-        test("asd\ndef\nasdf\n", [ "asd", "def", "asdf" ]);
-        test("foo", [ "foo" ], KeepTerminator.no, true);
-        testTerm("bob\r\nmarge\r\nsteve\r\n", ["bob", "marge", "steve"],
-            KeepTerminator.no, "\r\n", false);
-        testTerm("sue\r", ["sue"], KeepTerminator.no, '\r', false);
-
-        test("", null, KeepTerminator.yes);
-        test("\n", [ "\n" ], KeepTerminator.yes);
-        test("asd\ndef\nasdf", [ "asd\n", "def\n", "asdf" ], KeepTerminator.yes);
-        test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], KeepTerminator.yes);
-        test("asd\ndef\nasdf\n", [ "asd\n", "def\n", "asdf\n" ], KeepTerminator.yes, true);
-        test("foo", [ "foo" ], KeepTerminator.yes, false);
-        testTerm("bob\r\nmarge\r\nsteve\r\n", ["bob\r\n", "marge\r\n", "steve\r\n"],
-            KeepTerminator.yes, "\r\n", false);
-        testTerm("sue\r", ["sue\r"], KeepTerminator.yes, '\r', false);
-
-        auto file = File.tmpfile();
+            /* the C function tmpfile doesn't work when called from a shared
+               library apk:
+               https://code.google.com/p/android/issues/detail?id=66815 */
+            auto deleteme = testFilename();
+            auto file = File(deleteme, "w+");
+            scope(success) std.file.remove(deleteme);
+        }
+        else
+            auto file = File.tmpfile();
         file.write("1\n2\n3\n");
 
         // bug 9599
@@ -1793,6 +2002,18 @@ the contents may well have changed).
 
         file.detach();
         assert(!file.isOpen);
+    }
+
+    unittest
+    {
+        auto deleteme = testFilename();
+        std.file.write(deleteme, "hi");
+        scope(success) std.file.remove(deleteme);
+
+        auto blc = File(deleteme).byLineCopy;
+        assert(!blc.empty);
+        // check front is cached
+        assert(blc.front is blc.front);
     }
 
     template byRecord(Fields...)
@@ -2007,36 +2228,44 @@ $(D Range) that locks the file and allows fast writing to it.
  */
     struct LockingTextWriter
     {
-        FILE* fps;          // the shared file handle
-        _iobuf* handle;     // the unshared version of fps
-        int orientation;
+    private:
+        FILE* fps_;          // the shared file handle
+        _iobuf* handle_;     // the unshared version of fps
+        int orientation_;
+    public:
+        deprecated("accessing fps/handle/orientation directly can break LockingTextWriter integrity")
+        {
+            alias fps = fps_;
+            alias handle = handle_;
+            alias orientation = orientation_;
+        }
 
-        this(ref File f)
+        this(ref File f) @trusted
         {
             import std.exception : enforce;
 
             enforce(f._p && f._p.handle);
-            fps = f._p.handle;
-            orientation = fwide(fps, 0);
-            FLOCK(fps);
-            handle = cast(_iobuf*)fps;
+            fps_ = f._p.handle;
+            orientation_ = fwide(fps_, 0);
+            FLOCK(fps_);
+            handle_ = cast(_iobuf*)fps_;
         }
 
-        ~this()
+        ~this() @trusted
         {
-            if(fps)
+            if(fps_)
             {
-                FUNLOCK(fps);
-                fps = null;
-                handle = null;
+                FUNLOCK(fps_);
+                fps_ = null;
+                handle_ = null;
             }
         }
 
-        this(this)
+        this(this) @trusted
         {
-            if(fps)
+            if(fps_)
             {
-                FLOCK(fps);
+                FLOCK(fps_);
             }
         }
 
@@ -2052,12 +2281,16 @@ $(D Range) that locks the file and allows fast writing to it.
             static assert(!is(C == void));
             static if (isSomeString!A && C.sizeof == 1)
             {
-                if (orientation <= 0)
+                if (orientation_ <= 0)
                 {
                     //file.write(writeme); causes infinite recursion!!!
                     //file.rawWrite(writeme);
+                    static auto trustedFwrite(in void* ptr, size_t size, size_t nmemb, FILE* stream) @trusted
+                    {
+                        return .fwrite(ptr, size, nmemb, stream);
+                    }
                     auto result =
-                        .fwrite(writeme.ptr, C.sizeof, writeme.length, fps);
+                        trustedFwrite(writeme.ptr, C.sizeof, writeme.length, fps_);
                     if (result != writeme.length) errnoEnforce(0);
                     return;
                 }
@@ -2073,49 +2306,62 @@ $(D Range) that locks the file and allows fast writing to it.
         // @@@BUG@@@ 2340
         //void front(C)(C c) if (is(C : dchar)) {
         /// ditto
-        void put(C)(C c) if (is(C : const(dchar)))
+        void put(C)(C c) @safe if (is(C : const(dchar)))
         {
+            static auto trustedFPUTC(int ch, _iobuf* h) @trusted
+            {
+                return FPUTC(ch, h);
+            }
+            static auto trustedFPUTWC(ParameterTypeTuple!FPUTWC[0] ch, _iobuf* h) @trusted
+            {
+                return FPUTWC(ch, h);
+            }
+
             static if (c.sizeof == 1)
             {
                 // simple char
-                if (orientation <= 0) FPUTC(c, handle);
-                else FPUTWC(c, handle);
+                if (orientation_ <= 0) trustedFPUTC(c, handle_);
+                else trustedFPUTWC(c, handle_);
             }
             else static if (c.sizeof == 2)
             {
-                if (orientation <= 0)
+                import std.utf : toUTF8;
+
+                if (orientation_ <= 0)
                 {
                     if (c <= 0x7F)
                     {
-                        FPUTC(c, handle);
+                        trustedFPUTC(c, handle_);
                     }
                     else
                     {
                         char[4] buf;
                         auto b = std.utf.toUTF8(buf, c);
                         foreach (i ; 0 .. b.length)
-                            FPUTC(b[i], handle);
+                            trustedFPUTC(b[i], handle_);
                     }
                 }
                 else
                 {
-                    FPUTWC(c, handle);
+                    trustedFPUTWC(c, handle_);
                 }
             }
             else // 32-bit characters
             {
-                if (orientation <= 0)
+                import std.utf : toUTF8;
+
+                if (orientation_ <= 0)
                 {
                     if (c <= 0x7F)
                     {
-                        FPUTC(c, handle);
+                        trustedFPUTC(c, handle_);
                     }
                     else
                     {
                         char[4] buf = void;
                         auto b = std.utf.toUTF8(buf, c);
                         foreach (i ; 0 .. b.length)
-                            FPUTC(b[i], handle);
+                            trustedFPUTC(b[i], handle_);
                     }
                 }
                 else
@@ -2127,21 +2373,21 @@ $(D Range) that locks the file and allows fast writing to it.
                         assert(isValidDchar(c));
                         if (c <= 0xFFFF)
                         {
-                            FPUTWC(c, handle);
+                            trustedFPUTWC(c, handle_);
                         }
                         else
                         {
-                            FPUTWC(cast(wchar)
+                            trustedFPUTWC(cast(wchar)
                                     ((((c - 0x10000) >> 10) & 0x3FF)
-                                            + 0xD800), handle);
-                            FPUTWC(cast(wchar)
+                                            + 0xD800), handle_);
+                            trustedFPUTWC(cast(wchar)
                                     (((c - 0x10000) & 0x3FF) + 0xDC00),
-                                    handle);
+                                    handle_);
                         }
                     }
                     else version (Posix)
                     {
-                        FPUTWC(c, handle);
+                        trustedFPUTWC(c, handle_);
                     }
                     else
                     {
@@ -2156,13 +2402,13 @@ $(D Range) that locks the file and allows fast writing to it.
 
 See $(LREF byChunk) for an example.
 */
-    auto lockingTextWriter()
+    auto lockingTextWriter() @safe
     {
         return LockingTextWriter(this);
     }
 
 /// Get the size of the file, ulong.max if file is not searchable, but still throws if an actual error occurs.
-    @property ulong size()
+    @property ulong size() @safe
     {
         import std.exception : collectException;
 
@@ -2172,6 +2418,144 @@ See $(LREF byChunk) for an example.
         seek(0, SEEK_END);
         return tell;
     }
+}
+
+unittest
+{
+    @system struct SystemToString
+    {
+        string toString()
+        {
+            return "system";
+        }
+    }
+
+    @trusted struct TrustedToString
+    {
+        string toString()
+        {
+            return "trusted";
+        }
+    }
+
+    @safe struct SafeToString
+    {
+        string toString()
+        {
+            return "safe";
+        }
+    }
+
+    @system void systemTests()
+    {
+        //system code can write to files/stdout with anything!
+        if(false)
+        {
+            auto f = File();
+
+            f.write("just a string");
+            f.write("string with arg: ", 47);
+            f.write(SystemToString());
+            f.write(TrustedToString());
+            f.write(SafeToString());
+
+            write("just a string");
+            write("string with arg: ", 47);
+            write(SystemToString());
+            write(TrustedToString());
+            write(SafeToString());
+
+            f.writeln("just a string");
+            f.writeln("string with arg: ", 47);
+            f.writeln(SystemToString());
+            f.writeln(TrustedToString());
+            f.writeln(SafeToString());
+
+            writeln("just a string");
+            writeln("string with arg: ", 47);
+            writeln(SystemToString());
+            writeln(TrustedToString());
+            writeln(SafeToString());
+
+            f.writef("string with arg: %s", 47);
+            f.writef("%s", SystemToString());
+            f.writef("%s", TrustedToString());
+            f.writef("%s", SafeToString());
+
+            writef("string with arg: %s", 47);
+            writef("%s", SystemToString());
+            writef("%s", TrustedToString());
+            writef("%s", SafeToString());
+
+            f.writefln("string with arg: %s", 47);
+            f.writefln("%s", SystemToString());
+            f.writefln("%s", TrustedToString());
+            f.writefln("%s", SafeToString());
+
+            writefln("string with arg: %s", 47);
+            writefln("%s", SystemToString());
+            writefln("%s", TrustedToString());
+            writefln("%s", SafeToString());
+        }
+    }
+
+    @safe void safeTests()
+    {
+        auto f = File();
+
+        //safe code can write to files only with @safe and @trusted code...
+        if(false)
+        {
+            f.write("just a string");
+            f.write("string with arg: ", 47);
+            f.write(TrustedToString());
+            f.write(SafeToString());
+
+            write("just a string");
+            write("string with arg: ", 47);
+            write(TrustedToString());
+            write(SafeToString());
+
+            f.writeln("just a string");
+            f.writeln("string with arg: ", 47);
+            f.writeln(TrustedToString());
+            f.writeln(SafeToString());
+
+            writeln("just a string");
+            writeln("string with arg: ", 47);
+            writeln(TrustedToString());
+            writeln(SafeToString());
+
+            f.writef("string with arg: %s", 47);
+            f.writef("%s", TrustedToString());
+            f.writef("%s", SafeToString());
+
+            writef("string with arg: %s", 47);
+            writef("%s", TrustedToString());
+            writef("%s", SafeToString());
+
+            f.writefln("string with arg: %s", 47);
+            f.writefln("%s", TrustedToString());
+            f.writefln("%s", SafeToString());
+
+            writefln("string with arg: %s", 47);
+            writefln("%s", TrustedToString());
+            writefln("%s", SafeToString());
+        }
+
+        static assert(!__traits(compiles, f.write(SystemToString().toString())));
+        static assert(!__traits(compiles, f.writeln(SystemToString())));
+        static assert(!__traits(compiles, f.writef("%s", SystemToString())));
+        static assert(!__traits(compiles, f.writefln("%s", SystemToString())));
+
+        static assert(!__traits(compiles, write(SystemToString().toString())));
+        static assert(!__traits(compiles, writeln(SystemToString())));
+        static assert(!__traits(compiles, writef("%s", SystemToString())));
+        static assert(!__traits(compiles, writefln("%s", SystemToString())));
+    }
+
+    systemTests();
+    safeTests();
 }
 
 unittest
@@ -2189,6 +2573,8 @@ unittest
 
 unittest
 {
+    static import std.file;
+
     auto deleteme = testFilename();
     scope(exit) std.file.remove(deleteme);
 
@@ -2318,81 +2704,6 @@ unittest
     //pragma(msg, "--- todo: readf ---");
 }
 
-private
-void writefx(FILE* fps, TypeInfo[] arguments, void* argptr, int newline=false)
-{
-    import std.format : doFormat;
-    import std.utf : toUTF8;
-
-    int orientation = fwide(fps, 0);    // move this inside the lock?
-
-    /* Do the file stream locking at the outermost level
-     * rather than character by character.
-     */
-    FLOCK(fps);
-    scope(exit) FUNLOCK(fps);
-
-    auto fp = cast(_iobuf*)fps;     // fp is locked version
-
-    if (orientation <= 0)                // byte orientation or no orientation
-    {
-        void putc(dchar c)
-        {
-            if (c <= 0x7F)
-            {
-                FPUTC(c, fp);
-            }
-            else
-            {
-                char[4] buf = void;
-                foreach (i; 0 .. std.utf.toUTF8(buf, c).length)
-                    FPUTC(buf[i], fp);
-            }
-        }
-
-        std.format.doFormat(&putc, arguments, argptr);
-        if (newline)
-            FPUTC('\n', fp);
-    }
-    else if (orientation > 0)                // wide orientation
-    {
-        version (Windows)
-        {
-            void putcw(dchar c)
-            {
-                import std.utf : isValidDchar;
-
-                assert(isValidDchar(c));
-                if (c <= 0xFFFF)
-                {
-                    FPUTWC(c, fp);
-                }
-                else
-                {
-                    FPUTWC(cast(wchar) ((((c - 0x10000) >> 10) & 0x3FF) +
-                                    0xD800), fp);
-                    FPUTWC(cast(wchar) (((c - 0x10000) & 0x3FF) + 0xDC00), fp);
-                }
-            }
-        }
-        else version (Posix)
-        {
-            void putcw(dchar c)
-            {
-                FPUTWC(c, fp);
-            }
-        }
-        else
-        {
-            static assert(0);
-        }
-
-        std.format.doFormat(&putcw, arguments, argptr);
-        if (newline)
-            FPUTWC('\n', fp);
-    }
-}
-
 /**
  * Indicates whether $(D T) is a file handle of some kind.
  */
@@ -2409,10 +2720,16 @@ unittest
 }
 
 /**
- * $(RED Scheduled for deprecation in January 2013.
- *       Please use $(D isFileHandle) instead.)
+ * $(RED Deprecated. Please use $(D isFileHandle) instead. This alias will be
+ *       removed in June 2015.)
  */
+deprecated("Please use isFileHandle instead.")
 alias isStreamingDevice = isFileHandle;
+
+/**
+ * Property used by writeln/etc. so it can infer @safe since stdout is __gshared
+ */
+private @property File trustedStdout() @trusted { return stdout; }
 
 /***********************************
 For each argument $(D arg) in $(D args), format the argument (as per
@@ -2424,7 +2741,7 @@ Throws: In case of an I/O error, throws an $(D StdioException).
  */
 void write(T...)(T args) if (!is(T[0] : File))
 {
-    stdout.write(args);
+    trustedStdout.write(args);
 }
 
 unittest
@@ -2475,13 +2792,14 @@ void writeln(T...)(T args)
         import std.exception : enforce;
 
         // Specialization for strings - a very frequent case
-        enforce(fprintf(.stdout._p.handle, "%.*s\n",
-                        cast(int) args[0].length, args[0].ptr) >= 0);
+        auto w = .trustedStdout.lockingTextWriter();
+        w.put(args[0]);
+        w.put("\n");
     }
     else
     {
         // Most general instance
-        stdout.write(args, '\n');
+        trustedStdout.write(args, '\n');
     }
 }
 
@@ -2534,13 +2852,14 @@ unittest
     writeln("Hello!"c);
     writeln("Hello!"w);    // bug 8386
     writeln("Hello!"d);    // bug 8386
+    writeln("embedded\0null"c); // bug 8730
     stdout.close();
     version (Windows)
         assert(cast(char[]) std.file.read(deleteme) ==
-            "Hello!\r\nHello!\r\nHello!\r\n");
+            "Hello!\r\nHello!\r\nHello!\r\nembedded\0null\r\n");
     else
         assert(cast(char[]) std.file.read(deleteme) ==
-            "Hello!\nHello!\nHello!\n");
+            "Hello!\nHello!\nHello!\nembedded\0null\n");
 }
 
 unittest
@@ -2634,7 +2953,7 @@ to write numbers in platform-native format.
 
 void writef(T...)(T args)
 {
-    stdout.writef(args);
+    trustedStdout.writef(args);
 }
 
 unittest
@@ -2665,7 +2984,7 @@ unittest
  */
 void writefln(T...)(T args)
 {
-    stdout.writefln(args);
+    trustedStdout.writefln(args);
 }
 
 unittest
@@ -2740,7 +3059,9 @@ unittest
  *        The line that was read, including the line terminator character.
  * Params:
  *        S = Template parameter; the type of the allocated buffer, and the type returned. Defaults to $(D string).
- *        terminator = line terminator (by default, '\n')
+ *        terminator = Line terminator (by default, $(D '\n')).
+ * Note:
+ *        String terminators are not supported due to ambiguity with readln(buf) below.
  * Throws:
  *        $(D StdioException) on I/O error, or $(D UnicodeException) on Unicode conversion error.
  * Example:
@@ -2773,7 +3094,8 @@ if (isSomeString!S)
  *        $(D size_t) 0 for end of file, otherwise number of characters read
  * Params:
  *        buf = Buffer used to store the resulting line data. buf is resized as necessary.
- *        terminator = line terminator (by default, '\n')
+ *        terminator = Line terminator (by default, $(D '\n')). Use $(XREF ascii, newline)
+ *        for portability (unless the file was opened in text mode).
  * Throws:
  *        $(D StdioException) on I/O error, or $(D UnicodeException) on Unicode conversion error.
  * Example:
@@ -2833,7 +3155,7 @@ unittest
  * (to $(D _wfopen) on Windows)
  * with appropriately-constructed C-style strings.
  */
-private FILE* fopen(in char[] name, in char[] mode = "r")
+private FILE* fopen(in char[] name, in char[] mode = "r") @trusted
 {
     import std.string : toStringz;
 
@@ -2866,7 +3188,7 @@ version (Posix)
      * Convenience function that forwards to $(D std.c.stdio.popen)
      * with appropriately-constructed C-style strings.
      */
-    FILE* popen(in char[] name, in char[] mode = "r")
+    FILE* popen(in char[] name, in char[] mode = "r") @trusted
     {
         import std.string : toStringz;
 
@@ -2898,7 +3220,7 @@ void main()
   }
 }
 ---------
- The line terminator ('\n' by default) is part of the string read (it
+The line terminator ($(D '\n') by default) is part of the string read (it
 could be missing in the last line of the file). Several types are
 supported for $(D line), and the behavior of $(D lines)
 changes accordingly:
@@ -2927,6 +3249,9 @@ Example:
 ----
 
  In case of an I/O error, an $(D StdioException) is thrown.
+
+See_Also:
+$(LREF byLine)
  */
 
 struct lines
@@ -2935,6 +3260,12 @@ struct lines
     private dchar terminator = '\n';
     // private string fileName;  // Curretly, no use
 
+    /**
+    Constructor.
+    Params:
+    f = File to read lines from.
+    terminator = Line separator ($(D '\n') by default).
+    */
     this(File f, dchar terminator = '\n')
     {
         this.f = f;
@@ -3298,16 +3629,16 @@ Initialize with a message and an error code. */
         errno = e;
         version (Posix)
         {
-            import std.c.string : strerror_r;
+            import core.stdc.string : strerror_r;
 
             char[256] buf = void;
             version (linux)
             {
-                auto s = std.c.string.strerror_r(errno, buf.ptr, buf.length);
+                auto s = core.stdc.string.strerror_r(errno, buf.ptr, buf.length);
             }
             else
             {
-                std.c.string.strerror_r(errno, buf.ptr, buf.length);
+                core.stdc.string.strerror_r(errno, buf.ptr, buf.length);
                 auto s = buf.ptr;
             }
         }
@@ -3763,14 +4094,14 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
 */
 version(linux)
 {
-    static import linux = std.c.linux.linux;
-    static import sock = std.c.linux.socket;
-    import core.stdc.string : memcpy;
-
     File openNetwork(string host, ushort port)
     {
+        static import linux = std.c.linux.linux;
+        static import sock = std.c.linux.socket;
+        import core.stdc.string : memcpy;
         import std.conv : to;
         import std.exception : enforce;
+        import std.string : toStringz;
 
         auto h = enforce( sock.gethostbyname(std.string.toStringz(host)),
             new StdioException("gethostbyname"));

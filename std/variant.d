@@ -65,7 +65,7 @@
  */
 module std.variant;
 
-import std.c.string, std.conv, std.exception, std.traits, std.typecons,
+import core.stdc.string, std.conv, std.exception, std.traits, std.typecons,
     std.typetuple;
 
 @trusted:
@@ -185,9 +185,9 @@ private:
 
     // Each internal operation is encoded with an identifier. See
     // the "handler" function below.
-    enum OpID { getTypeInfo, get, compare, testConversion, toString,
+    enum OpID { getTypeInfo, get, compare, equals, testConversion, toString,
             index, indexAssign, catAssign, copyOut, length,
-            apply }
+            apply, postblit, destruct }
 
     // state
     ptrdiff_t function(OpID selector, ubyte[size]* store, void* data) fptr
@@ -215,6 +215,7 @@ private:
             // no need to copy the data (it's garbage)
             break;
         case OpID.compare:
+        case OpID.equals:
             auto rhs = cast(const VariantN *) parm;
             return rhs.peek!(A)
                 ? 0 // all uninitialized are equal
@@ -222,6 +223,9 @@ private:
         case OpID.toString:
             string * target = cast(string*) parm;
             *target = "<Uninitialized VariantN>";
+            break;
+        case OpID.postblit:
+        case OpID.destruct:
             break;
         case OpID.get:
         case OpID.testConversion:
@@ -250,6 +254,39 @@ private:
             }
             return null;
         }
+
+        static ptrdiff_t compare(A* rhsPA, A* zis, OpID selector)
+        {
+            static if (is(typeof(*rhsPA == *zis)))
+            {
+                if (*rhsPA == *zis)
+                {
+                    return 0;
+                }
+                static if (is(typeof(*zis < *rhsPA)))
+                {
+                    // Many types (such as any using the default Object opCmp)
+                    // will throw on an invalid opCmp, so do it only
+                    // if the caller requests it.
+                    if (selector == OpID.compare)
+                        return *zis < *rhsPA ? -1 : 1;
+                    else
+                        return ptrdiff_t.min;
+                }
+                else
+                {
+                    // Not equal, and type does not support ordering
+                    // comparisons.
+                    return ptrdiff_t.min;
+                }
+            }
+            else
+            {
+                // Type does not support comparisons at all.
+                return ptrdiff_t.min;
+            }
+        }
+
         auto zis = getPtr(pStore);
         // Input: TypeInfo object
         // Output: target points to a copy of *me, if me was not null
@@ -268,7 +305,7 @@ private:
                 alias AllTypes = ConstTypes;
             else //static if (isMutable!A)
                 alias AllTypes = TypeTuple!(MutaTypes, ConstTypes);
-                
+
             foreach (T ; AllTypes)
             {
                 if (targetType != typeid(T))
@@ -327,6 +364,7 @@ private:
         case OpID.testConversion:
             return !tryPutting(null, *cast(TypeInfo*) parm, null);
         case OpID.compare:
+        case OpID.equals:
             auto rhsP = cast(VariantN *) parm;
             auto rhsType = rhsP.type;
             // Are we the same?
@@ -334,28 +372,7 @@ private:
             {
                 // cool! Same type!
                 auto rhsPA = getPtr(&rhsP.store);
-                static if (is(typeof(A.init == A.init)))
-                {
-                    if (*rhsPA == *zis)
-                    {
-                        return 0;
-                    }
-                    static if (is(typeof(A.init < A.init)))
-                    {
-                        return *zis < *rhsPA ? -1 : 1;
-                    }
-                    else
-                    {
-                        // Not equal, and type does not support ordering
-                        // comparisons.
-                        return ptrdiff_t.min;
-                    }
-                }
-                else
-                {
-                    // Type does not support comparisons at all.
-                    return ptrdiff_t.min;
-                }
+                return compare(rhsPA, zis, selector);
             } else if (rhsType == typeid(void))
             {
                 // No support for ordering comparisons with
@@ -370,7 +387,10 @@ private:
                 // also fix up its fptr
                 temp.fptr = rhsP.fptr;
                 // now lhsWithRhsType is a full-blown VariantN of rhs's type
-                return temp.opCmp(*rhsP);
+                if (selector == OpID.compare)
+                    return temp.opCmp(*rhsP);
+                else
+                    return temp.opEquals(*rhsP) ? 0 : 1;
             }
             // Does rhs convert to zis?
             *cast(TypeInfo*) &temp.store = typeid(A);
@@ -378,28 +398,7 @@ private:
             {
                 // cool! Now temp has rhs in my type!
                 auto rhsPA = getPtr(&temp.store);
-                static if (is(typeof(A.init == A.init)))
-                {
-                    if (*rhsPA == *zis)
-                    {
-                        return 0;
-                    }
-                    static if (is(typeof(A.init < A.init)))
-                    {
-                        return *zis < *rhsPA ? -1 : 1;
-                    }
-                    else
-                    {
-                        // Not equal, and type does not support ordering
-                        // comparisons.
-                        return ptrdiff_t.min;
-                    }
-                }
-                else
-                {
-                    // Type does not support comparisons at all.
-                    return ptrdiff_t.min;
-                }
+                return compare(rhsPA, zis, selector);
             }
             return ptrdiff_t.min; // dunno
         case OpID.toString:
@@ -425,12 +424,7 @@ private:
         case OpID.index:
             // Added allowed!(...) prompted by a bug report by Chris
             // Nicholson-Sauls.
-            static if (isStaticArray!(A) && allowed!(typeof(A.init)))
-            {
-                enforce(0, "Not implemented");
-            }
-            // Can't handle void arrays as there isn't any result to return.
-            static if (isDynamicArray!(A) && !is(Unqual!(typeof(A.init[0])) == void) && allowed!(typeof(A.init[0])))
+            static if (isArray!(A) && !is(Unqual!(typeof(A.init[0])) == void) && allowed!(typeof(A.init[0])))
             {
                 // array type; input and output are the same VariantN
                 auto result = cast(VariantN*) parm;
@@ -497,7 +491,7 @@ private:
             }
 
         case OpID.length:
-            static if (is(typeof(zis.length)))
+            static if (isArray!(A) || isAssociativeArray!(A))
             {
                 return zis.length;
             }
@@ -545,6 +539,20 @@ private:
             }
             break;
 
+        case OpID.postblit:
+            static if (hasElaborateAssign!A)
+            {
+                typeid(A).postblit(zis);
+            }
+            break;
+
+        case OpID.destruct:
+            static if (hasElaborateDestructor!A)
+            {
+                typeid(A).destroy(zis);
+            }
+            break;
+
         default: assert(false);
         }
         return 0;
@@ -562,6 +570,16 @@ public:
         opAssign(value);
     }
 
+    this(this)
+    {
+        fptr(OpID.postblit, &store, null);
+    }
+
+    ~this()
+    {
+        fptr(OpID.destruct, &store, null);
+    }
+
     /** Assigns a $(D_PARAM VariantN) from a generic
      * argument. Statically rejects disallowed types. */
 
@@ -571,6 +589,9 @@ public:
         static assert(allowed!(T), "Cannot store a " ~ T.stringof
             ~ " in a " ~ VariantN.stringof ~ ". Valid types are "
                 ~ AllowedTypes.stringof);
+        // Assignment should destruct previous value
+        fptr(OpID.destruct, &store, null);
+
         static if (is(T : VariantN))
         {
             rhs.fptr(OpID.copyOut, &rhs.store, &this);
@@ -595,6 +616,10 @@ public:
                     memcpy(&store, cast(const(void*)) &rhs, rhs.sizeof);
                 else
                     memcpy(&store, &rhs, rhs.sizeof);
+                static if (hasElaborateAssign!T)
+                {
+                    typeid(T).postblit(&store);
+                }
             }
             else
             {
@@ -663,7 +688,7 @@ public:
      * assert(a == 6);
      * ----
      */
-    @property inout T * peek(T)() inout
+    @property inout(T)* peek(T)() inout
     {
         static if (!is(T == void))
             static assert(allowed!(T), "Cannot store a " ~ T.stringof
@@ -671,17 +696,19 @@ public:
         if (type != typeid(T))
             return null;
         static if (T.sizeof <= size)
-            return cast(T*)&store;
-        else 
-            return *cast(T**)&store;
+            return cast(inout T*)&store;
+        else
+            return *cast(inout T**)&store;
     }
 
     /**
      * Returns the $(D_PARAM typeid) of the currently held value.
      */
 
-    @property TypeInfo type() const
+    @property TypeInfo type() const nothrow @trusted
     {
+        scope(failure) assert(0);
+
         TypeInfo result;
         fptr(OpID.getTypeInfo, null, &result);
         return result;
@@ -778,7 +805,7 @@ public:
 
     @property T coerce(T)()
     {
-        static if (isNumeric!(T))
+        static if (isNumeric!T || isBoolean!T)
         {
             if (convertsTo!real)
             {
@@ -798,7 +825,6 @@ public:
             {
                 return to!T(get!(immutable(char)[]));
             }
-
             else
             {
                 enforce(false, text("Type ", type, " does not convert to ",
@@ -819,13 +845,6 @@ public:
             // Fix for bug 1649
             static assert(false, "unsupported type for coercion");
         }
-    }
-
-    // testing the string coerce
-    unittest
-    {
-        Variant a = "10";
-        assert(a.coerce!int == 10);
     }
 
     /**
@@ -850,7 +869,7 @@ public:
             alias temp = rhs;
         else
             auto temp = VariantN(rhs);
-        return !fptr(OpID.compare, cast(ubyte[size]*) &store,
+        return !fptr(OpID.equals, cast(ubyte[size]*) &store,
                      cast(void*) &temp);
     }
 
@@ -886,7 +905,7 @@ public:
      * Computes the hash of the held value.
      */
 
-    size_t toHash()
+    size_t toHash() const nothrow @safe
     {
         return type.getHash(&store);
     }
@@ -913,14 +932,14 @@ public:
         }
         else
         {
-            if (is(typeof(T.max) : uint) && T.min == 0 && convertsTo!(uint))
+            if (is(typeof(T.max) : uint) && isUnsigned!T && convertsTo!(uint))
                 result = mixin("get!(uint) " ~ op ~ " other");
-            else if (is(typeof(T.max) : int) && T.min < 0 && convertsTo!(int))
+            else if (is(typeof(T.max) : int) && !isUnsigned!T && convertsTo!(int))
                 result = mixin("get!(int) " ~ op ~ " other");
-            else if (is(typeof(T.max) : ulong) && T.min == 0
+            else if (is(typeof(T.max) : ulong) && isUnsigned!T
                      && convertsTo!(ulong))
                 result = mixin("get!(ulong) " ~ op ~ " other");
-            else if (is(typeof(T.max) : long) && T.min < 0 && convertsTo!(long))
+            else if (is(typeof(T.max) : long) && !isUnsigned!T && convertsTo!(long))
                 result = mixin("get!(long) " ~ op ~ " other");
             else if (is(T : float) && convertsTo!(float))
                 result = mixin("get!(float) " ~ op ~ " other");
@@ -1180,6 +1199,19 @@ unittest
     assert(v("43") == 43);
 }
 
+// opIndex with static arrays, issue 12771
+unittest
+{
+    int[4] elements = [0, 1, 2, 3];
+    Variant v = elements;
+    assert(v == elements);
+    assert(v[2] == 2);
+    assert(v[3] == 3);
+    v[2] = 6;
+    assert(v[2] == 6);
+    assert(v != elements);
+}
+
 //Issue# 8195
 unittest
 {
@@ -1412,6 +1444,26 @@ unittest
     // coerce tests
     a = Variant(42.22); assert(a.coerce!(int) == 42);
     a = cast(short) 5; assert(a.coerce!(double) == 5);
+    a = Variant("10"); assert(a.coerce!int == 10);
+
+    a = Variant(1);
+    assert(a.coerce!bool);
+    a = Variant(0);
+    assert(!a.coerce!bool);
+
+    a = Variant(1.0);
+    assert(a.coerce!bool);
+    a = Variant(0.0);
+    assert(!a.coerce!bool);
+    a = Variant(float.init);
+    assertThrown!ConvException(a.coerce!bool);
+
+    a = Variant("true");
+    assert(a.coerce!bool);
+    a = Variant("false");
+    assert(!a.coerce!bool);
+    a = Variant("");
+    assertThrown!ConvException(a.coerce!bool);
 
     // Object tests
     class B1 {}
@@ -1419,8 +1471,7 @@ unittest
     a = new B2;
     assert(a.coerce!(B1) !is null);
     a = new B1;
-// BUG: I can't get the following line to pass:
-//    assert(collectException(a.coerce!(B2) is null));
+    assert(collectException(a.coerce!(B2) is null));
     a = cast(Object) new B2; // lose static type info; should still work
     assert(a.coerce!(B2) !is null);
 
@@ -1649,6 +1700,24 @@ unittest
     v = null;
 }
 
+// Class and interface opEquals, issue 12157
+unittest
+{
+    class Foo { }
+
+    class DerivedFoo : Foo { }
+
+    Foo f1 = new Foo();
+    Foo f2 = new DerivedFoo();
+
+    Variant v1 = f1, v2 = f2;
+    assert(v1 == f1);
+    assert(v1 != new Foo());
+    assert(v1 != f2);
+    assert(v2 != v1);
+    assert(v2 == f2);
+}
+
 // Const parameters with opCall, issue 11361.
 unittest
 {
@@ -1720,14 +1789,14 @@ unittest
 }
 
 // Handling of empty types and arrays, e.g. issue 10958
-unittest 
+unittest
 {
     class EmptyClass { }
     struct EmptyStruct { }
     alias EmptyArray = void[0];
     alias Alg = Algebraic!(EmptyClass, EmptyStruct, EmptyArray);
 
-    Variant testEmpty(T)() 
+    Variant testEmpty(T)()
     {
         T inst;
         Variant v = inst;
@@ -1773,7 +1842,7 @@ unittest
         int val2;
     }
 
-    void testPeekWith(T)() 
+    void testPeekWith(T)()
     {
         T inst;
         inst.val1 = 3;
@@ -1801,7 +1870,7 @@ unittest
  * with $(D_PARM variant)'s current value. Visiting handlers are passed
  * in the template parameter list.
  * It is statically ensured that all types of
- * $(D_PARAM variant) are handled accross all handlers.
+ * $(D_PARAM variant) are handled across all handlers.
  * $(D_PARAM visit) allows delegates and static functions to be passed
  * as parameters.
  *
@@ -1832,7 +1901,7 @@ unittest
  *                         == -1);
  * ----------------------
  * Returns: The return type of visit is deduced from the visiting functions and must be
- * the same accross all overloads.
+ * the same across all overloads.
  * Throws: If no parameter-less, error function is specified:
  * $(D_PARAM VariantException) if $(D_PARAM variant) doesn't hold a value.
  */
@@ -1930,7 +1999,7 @@ unittest
  * ----------------------
  *
  * Returns: The return type of tryVisit is deduced from the visiting functions and must be
- * the same accross all overloads.
+ * the same across all overloads.
  * Throws: If no parameter-less, error function is specified: $(D_PARAM VariantException) if
  *         $(D_PARAM variant) doesn't hold a value or
  *         if $(D_PARAM variant) holds a value which isn't handled by the visiting
@@ -2202,3 +2271,91 @@ unittest
     assertNotThrown!VariantException(v.get!(const(Object)));
     assertNotThrown!VariantException(v.get!(immutable(Object)));
 }
+
+unittest
+{
+    static struct DummyScope
+    {
+        // https://d.puremagic.com/issues/show_bug.cgi?id=12540
+        alias Alias12540 = Algebraic!Class12540;
+
+        static class Class12540
+        {
+            Alias12540 entity;
+        }
+    }
+}
+
+unittest
+{
+    // https://issues.dlang.org/show_bug.cgi?id=10194
+    // Also test for elaborate copying
+    static struct S
+    {
+        @disable this();
+        this(int dummy)
+        {
+            ++cnt;
+        }
+
+        this(this)
+        {
+            ++cnt;
+        }
+
+        @disable S opAssign();
+
+        ~this()
+        {
+            --cnt;
+            assert(cnt >= 0);
+        }
+        static int cnt = 0;
+    }
+
+    {
+        Variant v;
+        {
+            v = S(0);
+            assert(S.cnt == 1);
+        }
+        assert(S.cnt == 1);
+
+        // assigning a new value should destroy the existing one
+        v = 0;
+        assert(S.cnt == 0);
+
+        // destroying the variant should destroy it's current value
+        v = S(0);
+        assert(S.cnt == 1);
+    }
+    assert(S.cnt == 0);
+}
+
+unittest
+{
+    // Make sure Variant can handle types with opDispatch but no length field.
+    struct SWithNoLength
+    {
+        void opDispatch(string s)() { }
+    }
+
+    struct SWithLength
+    {
+        @property int opDispatch(string s)()
+        {
+            // Assume that s == "length"
+            return 5; // Any value is OK for test.
+        }
+    }
+
+    SWithNoLength sWithNoLength;
+    Variant v = sWithNoLength;
+    assertThrown!VariantException(v.length);
+
+    SWithLength sWithLength;
+    v = sWithLength;
+    assertNotThrown!VariantException(v.get!SWithLength.length);
+    assertThrown!VariantException(v.length);
+}
+

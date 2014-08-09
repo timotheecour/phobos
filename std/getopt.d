@@ -33,11 +33,25 @@ Distributed under the Boost Software License, Version 1.0.
 module std.getopt;
 
 private import std.array, std.string, std.conv, std.traits, std.bitmanip,
-    std.algorithm, std.ascii, std.exception;
+    std.algorithm, std.ascii, std.exception, std.typetuple, std.typecons;
 
 version (unittest)
 {
     import std.stdio; // for testing only
+}
+
+/**
+ * Thrown on one of the following conditions:
+ * - An unrecognized command-line argument is passed
+ *   and $(D std.getopt.config.passThrough) was not present.
+ */
+class GetOptException : Exception
+{
+    @safe pure nothrow
+    this(string msg, string file = __FILE__, size_t line = __LINE__)
+    {
+        super(msg, file, line);
+    }
 }
 
 /**
@@ -56,13 +70,19 @@ Color color;
 
 void main(string[] args)
 {
-  getopt(
+  auto helpInformation = getopt(
     args,
     "length",  &length,    // numeric
     "file",    &data,      // string
     "verbose", &verbose,   // flag
-    "color",   &color);    // enum
+    "color", "Information about this color", &color);    // enum
   ...
+
+  if (helpInformation.helpWanted)
+  {
+    defaultGetoptPrinter("Some information about the program.",
+      helpInformation.options);
+  }
 }
 ---------
 
@@ -81,56 +101,63 @@ void main(string[] args)
  to their defaults and then invoke $(D getopt). If a
  command-line argument is recognized as an option with a parameter and
  the parameter cannot be parsed properly (e.g. a number is expected
- but not present), a $(D Exception) exception is thrown.
+ but not present), a $(D ConvException) exception is thrown.
+ If $(D std.getopt.config.passThrough) was not passed to getopt
+ and an unrecognized command-line argument is found, a $(D GetOptException)
+ is thrown.
 
  Depending on the type of the pointer being bound, $(D getopt)
  recognizes the following kinds of options:
 
- $(OL $(LI $(I Boolean options). A lone argument sets the option to $(D true).
- Additionally $(B true) or $(B false) can be set within the option separated with
- an "=" sign:
+ $(OL
+    $(LI $(I Boolean options). A lone argument sets the option to $(D true).
+    Additionally $(B true) or $(B false) can be set within the option separated
+    with an "=" sign:
 
 ---------
   bool verbose = false, debugging = true;
   getopt(args, "verbose", &verbose, "debug", &debugging);
 ---------
 
- To set $(D verbose) to $(D true), invoke the program with either $(D
- --verbose) or $(D --verbose=true).
+    To set $(D verbose) to $(D true), invoke the program with either
+    $(D --verbose) or $(D --verbose=true).
 
- To set $(D debugging) to $(D false), invoke the program with $(D --debugging=false).
-
- )$(LI $(I Numeric options.) If an option is bound to a numeric type, a
- number is expected as the next option, or right within the option
- separated with an "=" sign:
+    To set $(D debugging) to $(D false), invoke the program with
+    $(D --debugging=false).
+    )
+    
+    $(LI $(I Numeric options.) If an option is bound to a numeric type, a
+    number is expected as the next option, or right within the option separated
+    with an "=" sign:
 
 ---------
   uint timeout;
   getopt(args, "timeout", &timeout);
 ---------
 
-To set $(D timeout) to $(D 5), invoke the program with either $(D
---timeout=5) or $(D --timeout 5).
+    To set $(D timeout) to $(D 5), invoke the program with either
+    $(D --timeout=5) or $(D --timeout 5).
+    )
 
- $(UL $(LI $(I Incremental options.) If an option name has a "+" suffix and
- is bound to a numeric type, then the option's value tracks the number
- of times the option occurred on the command line:
+    $(LI $(I Incremental options.) If an option name has a "+" suffix and is
+    bound to a numeric type, then the option's value tracks the number of times
+    the option occurred on the command line:
 
 ---------
   uint paranoid;
   getopt(args, "paranoid+", &paranoid);
 ---------
 
- Invoking the program with "--paranoid --paranoid --paranoid" will set
- $(D paranoid) to 3. Note that an incremental option never
- expects a parameter, e.g. in the command line "--paranoid 42
- --paranoid", the "42" does not set $(D paranoid) to 42;
- instead, $(D paranoid) is set to 2 and "42" is not considered
- as part of the normal program arguments.)))
+    Invoking the program with "--paranoid --paranoid --paranoid" will set $(D
+    paranoid) to 3. Note that an incremental option never expects a parameter,
+    e.g. in the command line "--paranoid 42 --paranoid", the "42" does not set
+    $(D paranoid) to 42; instead, $(D paranoid) is set to 2 and "42" is not
+    considered as part of the normal program arguments.
+    )
 
- $(LI $(I Enum options.) If an option is bound to an enum, an enum symbol as a
- string is expected as the next option, or right within the option separated
- with an "=" sign:
+    $(LI $(I Enum options.) If an option is bound to an enum, an enum symbol as
+    a string is expected as the next option, or right within the option
+    separated with an "=" sign:
 
 ---------
   enum Color { no, yes };
@@ -138,57 +165,88 @@ To set $(D timeout) to $(D 5), invoke the program with either $(D
   getopt(args, "color", &color);
 ---------
 
-To set $(D color) to $(D Color.yes), invoke the program with either $(D
---color=yes) or $(D --color yes).)
+    To set $(D color) to $(D Color.yes), invoke the program with either
+    $(D --color=yes) or $(D --color yes).
+    )
 
- $(LI $(I String options.) If an option is bound to a string, a string
- is expected as the next option, or right within the option separated
- with an "=" sign:
+    $(LI $(I String options.) If an option is bound to a string, a string is
+    expected as the next option, or right within the option separated with an
+    "=" sign:
 
 ---------
 string outputFile;
 getopt(args, "output", &outputFile);
 ---------
 
- Invoking the program with "--output=myfile.txt" or "--output
- myfile.txt" will set $(D outputFile) to "myfile.txt". If you want to
- pass a string containing spaces, you need to use the quoting that is
- appropriate to your shell, e.g. --output='my file.txt'.)
+    Invoking the program with "--output=myfile.txt" or "--output myfile.txt"
+    will set $(D outputFile) to "myfile.txt". If you want to pass a string
+    containing spaces, you need to use the quoting that is appropriate to your
+    shell, e.g. --output='my file.txt'.
+    )
 
- $(LI $(I Array options.) If an option is bound to an array, a new
- element is appended to the array each time the option occurs:
+    $(LI $(I Array options.) If an option is bound to an array, a new element
+    is appended to the array each time the option occurs:
 
 ---------
 string[] outputFiles;
 getopt(args, "output", &outputFiles);
 ---------
 
- Invoking the program with "--output=myfile.txt --output=yourfile.txt"
- or "--output myfile.txt --output yourfile.txt" will set $(D
- outputFiles) to [ "myfile.txt", "yourfile.txt" ] .)
+    Invoking the program with "--output=myfile.txt --output=yourfile.txt" or
+    "--output myfile.txt --output yourfile.txt" will set $(D outputFiles) to
+    $(D [ "myfile.txt", "yourfile.txt" ]).
 
- $(LI $(I Hash options.) If an option is bound to an associative
- array, a string of the form "name=value" is expected as the next
- option, or right within the option separated with an "=" sign:
+    Alternatively you can set $(LREF arraySep) as the element separator:
+
+---------
+string[] outputFiles;
+arraySep = ",";  // defaults to "", separation by whitespace
+getopt(args, "output", &outputFiles);
+---------
+
+    With the above code you can invoke the program with
+    "--output=myfile.txt,yourfile.txt", or "--output myfile.txt,yourfile.txt".)
+
+    $(LI $(I Hash options.) If an option is bound to an associative array, a
+    string of the form "name=value" is expected as the next option, or right
+    within the option separated with an "=" sign:
 
 ---------
 double[string] tuningParms;
 getopt(args, "tune", &tuningParms);
 ---------
 
-Invoking the program with e.g. "--tune=alpha=0.5 --tune beta=0.6" will
-set $(D tuningParms) to [ "alpha" : 0.5, "beta" : 0.6 ]. In general,
-keys and values can be of any parsable types.)
+    Invoking the program with e.g. "--tune=alpha=0.5 --tune beta=0.6" will set
+    $(D tuningParms) to [ "alpha" : 0.5, "beta" : 0.6 ].
 
-$(LI $(I Callback options.) An option can be bound to a function or
-delegate with the signature $(D void function()), $(D void function(string option)),
-$(D void function(string option, string value)), or their delegate equivalents.
+    Alternatively you can set $(LREF arraySep) as the element separator:
 
-$(UL $(LI If the callback doesn't take any arguments, the callback is invoked
-whenever the option is seen.) $(LI If the callback takes one string argument,
-the option string (without the leading dash(es)) is passed to the callback.
-After that, the option string is considered handled and removed from the
-options array.
+---------
+double[string] tuningParms;
+arraySep = ",";  // defaults to "", separation by whitespace
+getopt(args, "tune", &tuningParms);
+---------
+
+    With the above code you can invoke the program with
+    "--tune=alpha=0.5,beta=0.6", or "--tune alpha=0.5,beta=0.6".
+
+    In general, the keys and values can be of any parsable types.
+    )
+
+    $(LI $(I Callback options.) An option can be bound to a function or
+    delegate with the signature $(D void function()), $(D void function(string
+    option)), $(D void function(string option, string value)), or their
+    delegate equivalents.
+
+    $(UL
+        $(LI If the callback doesn't take any arguments, the callback is
+        invoked whenever the option is seen.
+        )
+        
+        $(LI If the callback takes one string argument, the option string
+        (without the leading dash(es)) is passed to the callback.  After that,
+        the option string is considered handled and removed from the options
+        array.
 
 ---------
 void main(string[] args)
@@ -210,11 +268,13 @@ void main(string[] args)
 }
 ---------
 
-)$(LI If the callback takes two string arguments, the
-option string is handled as an option with one argument, and parsed
-accordingly. The option and its value are passed to the
-callback. After that, whatever was passed to the callback is
-considered handled and removed from the list.
+        )
+        
+        $(LI If the callback takes two string arguments, the option string is
+        handled as an option with one argument, and parsed accordingly. The
+        option and its value are passed to the callback. After that, whatever
+        was passed to the callback is considered handled and removed from the
+        list.
 
 ---------
 void main(string[] args)
@@ -236,7 +296,9 @@ void main(string[] args)
   getopt(args, "verbosity", &myHandler);
 }
 ---------
-))))
+        )
+    ))
+)
 
 $(B Options with multiple names)
 
@@ -306,8 +368,8 @@ For more details about short options, refer also to the next section.
 $(B Bundling)
 
 Single-letter options can be bundled together, i.e. "-abc" is the same as
-$(D "-a -b -c"). By default, this confusing option is turned off. You can
-turn it on with the $(D std.getopt.config.bundling) directive:
+$(D "-a -b -c"). By default, this option is turned off. You can turn it on
+with the $(D std.getopt.config.bundling) directive:
 
 ---------
 bool foo, bar;
@@ -319,6 +381,22 @@ getopt(args,
 
 In case you want to only enable bundling for some of the parameters,
 bundling can be turned off with $(D std.getopt.config.noBundling).
+
+$(B Required)
+
+An option can be marked as required. If that option is not present in the
+arguments an exceptin will be thrown.
+
+---------
+bool foo, bar;
+getopt(args,
+    std.getopt.config.required,
+    "foo|f", &foo,
+    "bar|b", &bar);
+---------
+
+Only the option direclty following $(D std.getopt.config.required) is
+required.
 
 $(B Passing unrecognized options through)
 
@@ -337,6 +415,14 @@ getopt(args,
 An unrecognized option such as "--baz" will be found untouched in
 $(D args) after $(D getopt) returns.
 
+$(D Help Information Generation)
+
+If an option string is followed by another string, this string serves as an
+description for this option. The function $(D getopt) returns a struct of type 
+$(D GetoptResult). This return value contains information about all passed options
+as well a bool indicating if information about these options where required by
+the passed arguments.
+
 $(B Options Terminator)
 
 A lonesome double-dash terminates $(D getopt) gathering. It is used to
@@ -345,17 +431,38 @@ to another program). Invoking the example above with $(D "--foo -- --bar")
 parses foo but leaves "--bar" in $(D args). The double-dash itself is
 removed from the argument array.
 */
-void getopt(T...)(ref string[] args, T opts) {
+GetoptResult getopt(T...)(ref string[] args, T opts) {
     enforce(args.length,
             "Invalid arguments string passed: program name missing");
     configuration cfg;
-    return getoptImpl(args, cfg, opts);
+    GetoptResult rslt;
+
+    getoptImpl(args, cfg, rslt, opts);
+
+    return rslt;
+}
+
+///
+unittest
+{
+    auto args = ["prog", "--foo", "-b"];
+
+    bool foo;
+    bool bar;
+    auto rslt = getopt(args, "foo|f" "Some information about foo.", &foo, "bar|b", 
+        "Some help message about bar.", &bar);
+
+    if (rslt.helpWanted) 
+    {
+        defaultGetoptPrinter("Some information about the program.",
+            rslt.options);
+    }
 }
 
 /**
-   Configuration options for $(D getopt). 
-   
-   You can pass them to $(D getopt) in any position, except in between an option 
+   Configuration options for $(D getopt).
+
+   You can pass them to $(D getopt) in any position, except in between an option
    string and its bound pointer.
 */
 enum config {
@@ -373,10 +480,52 @@ enum config {
     noPassThrough,
     /// Stop at first argument that does not look like an option
     stopOnFirstNonOption,
+    /// Makes the next option a required option
+    required
 }
 
-private void getoptImpl(T...)(ref string[] args,
-    ref configuration cfg, T opts)
+/** The result of the $(D getoptX) function.
+
+The $(D GetOptDRslt) contains two members. The first member is a boolean with
+the name $(D helpWanted). The second member is an array of $(D Option). The 
+array is accessable by the name $(D options).
+*/
+struct GetoptResult {
+    bool helpWanted; /// Flag indicating if help was requested
+    Option[] options; /// All possible options
+}
+
+/** The result of the $(D getoptHelp) function.
+*/
+struct Option {
+    string optShort; /// The short symbol for this option
+    string optLong; /// The long symbol for this option
+    string help; /// The description of this option
+    bool required; /// If a option is required, not passing it will result in
+                   /// an error.
+}
+
+pure Option splitAndGet(string opt) @trusted nothrow
+{
+    auto sp = split(opt, "|");
+    Option ret;
+    if (sp.length > 1) 
+    {
+        ret.optShort = "-" ~ (sp[0].length < sp[1].length ? 
+            sp[0] : sp[1]);
+        ret.optLong = "--" ~ (sp[0].length > sp[1].length ? 
+            sp[0] : sp[1]);
+    } 
+    else 
+    {
+        ret.optLong = "--" ~ sp[0];
+    }
+
+    return ret;
+}
+
+private void getoptImpl(T...)(ref string[] args, ref configuration cfg, 
+        ref GetoptResult rslt, T opts)
 {
     static if (opts.length)
     {
@@ -384,13 +533,29 @@ private void getoptImpl(T...)(ref string[] args,
         {
             // it's a configuration flag, act on it
             setConfig(cfg, opts[0]);
-            return getoptImpl(args, cfg, opts[1 .. $]);
+            return getoptImpl(args, cfg, rslt, opts[1 .. $]);
         }
         else
         {
             // it's an option string
             auto option = to!string(opts[0]);
-            auto receiver = opts[1];
+            Option optionHelp = splitAndGet(option);
+            optionHelp.required = cfg.required;
+
+            static if (is(typeof(opts[1]) : string))
+            {
+                auto receiver = opts[2];
+                optionHelp.help = opts[1];
+                immutable lowSliceIdx = 3;
+            }
+            else
+            {
+                auto receiver = opts[1];
+                immutable lowSliceIdx = 2;
+            }
+
+            rslt.options ~= optionHelp;
+
             bool incremental;
             // Handle options of the form --blah+
             if (option.length && option[$ - 1] == autoIncrementChar)
@@ -398,8 +563,17 @@ private void getoptImpl(T...)(ref string[] args,
                 option = option[0 .. $ - 1];
                 incremental = true;
             }
-            handleOption(option, receiver, args, cfg, incremental);
-            return getoptImpl(args, cfg, opts[2 .. $]);
+
+            bool optWasHandled = handleOption(option, receiver, args, cfg, incremental);
+
+            if (cfg.required && !optWasHandled)
+            {
+                throw new GetOptException("Required option " ~ option ~ 
+                    "was not supplied");
+            }
+            cfg.required = false;
+
+            return getoptImpl(args, cfg, rslt, opts[lowSliceIdx .. $]);
         }
     }
     else
@@ -420,16 +594,30 @@ private void getoptImpl(T...)(ref string[] args,
             }
             if (!cfg.passThrough)
             {
-                throw new Exception("Unrecognized option "~a);
+                throw new GetOptException("Unrecognized option "~a);
+            }
+
+            if (a == "--help" || a == "-h")
+            {
+                rslt.helpWanted = true;
+
+                args = args.remove(i + 1);
             }
         }
+
+        Option helpOpt;
+        helpOpt.optShort = "-h";
+        helpOpt.optLong = "--help";
+        helpOpt.help = "This help information.";
+        rslt.options ~= helpOpt;
     }
 }
 
-void handleOption(R)(string option, R receiver, ref string[] args,
+bool handleOption(R)(string option, R receiver, ref string[] args,
         ref configuration cfg, bool incremental)
 {
     // Scan arguments looking for a match for this option
+    bool ret = false;
     for (size_t i = 1; i < args.length; ) {
         auto a = args[i];
         if (endOfOptions.length && a == endOfOptions) break;
@@ -464,6 +652,9 @@ void handleOption(R)(string option, R receiver, ref string[] args,
             ++i;
             continue;
         }
+
+        ret = true;
+
         // found it
         // from here on, commit to eat args[i]
         // (and potentially args[i + 1] too, but that comes later)
@@ -536,16 +727,46 @@ void handleOption(R)(string option, R receiver, ref string[] args,
             else static if (isArray!(typeof(*receiver)))
             {
                 // array receiver
-                *receiver ~= [ to!(typeof((*receiver)[0]))(val) ];
+                import std.range : ElementEncodingType;
+                alias E = ElementEncodingType!(typeof(*receiver));
+
+                if (arraySep == "")
+                {
+                    *receiver ~= to!E(val);
+                }
+                else
+                {
+                    foreach (elem; val.splitter(arraySep).map!(a => to!E(a))())
+                        *receiver ~= elem;
+                }
             }
             else static if (isAssociativeArray!(typeof(*receiver)))
             {
                 // hash receiver
                 alias K = typeof(receiver.keys[0]);
                 alias V = typeof(receiver.values[0]);
-                auto j = std.string.indexOf(val, assignChar);
-                auto key = val[0 .. j], value = val[j + 1 .. $];
-                (*receiver)[to!(K)(key)] = to!(V)(value);
+
+                import std.range : only;
+                import std.typecons : Tuple, tuple;
+
+                static Tuple!(K, V) getter(string input)
+                {
+                    auto j = std.string.indexOf(input, assignChar);
+                    auto key = input[0 .. j];
+                    auto value = input[j + 1 .. $];
+                    return tuple(to!K(key), to!V(value));
+                }
+
+                static void setHash(Range)(R receiver, Range range)
+                {
+                    foreach (k, v; range.map!getter)
+                        (*receiver)[k] = v;
+                }
+
+                if (arraySep == "")
+                    setHash(receiver, val.only);
+                else
+                    setHash(receiver, val.splitter(arraySep));
             }
             else
             {
@@ -554,29 +775,94 @@ void handleOption(R)(string option, R receiver, ref string[] args,
             }
         }
     }
+
+    return ret;
+}
+
+// 5316 - arrays with arraySep
+unittest
+{
+    arraySep = ",";
+    scope (exit) arraySep = "";
+
+    string[] names;
+    auto args = ["program.name", "-nfoo,bar,baz"];
+    getopt(args, "name|n", &names);
+    assert(names == ["foo", "bar", "baz"], to!string(names));
+
+    names = names.init;
+    args = ["program.name", "-n" "foo,bar,baz"].dup;
+    getopt(args, "name|n", &names);
+    assert(names == ["foo", "bar", "baz"], to!string(names));
+
+    names = names.init;
+    args = ["program.name", "--name=foo,bar,baz"].dup;
+    getopt(args, "name|n", &names);
+    assert(names == ["foo", "bar", "baz"], to!string(names));
+
+    names = names.init;
+    args = ["program.name", "--name", "foo,bar,baz"].dup;
+    getopt(args, "name|n", &names);
+    assert(names == ["foo", "bar", "baz"], to!string(names));
+}
+
+// 5316 - associative arrays with arraySep
+unittest
+{
+    arraySep = ",";
+    scope (exit) arraySep = "";
+
+    int[string] values;
+    values = values.init;
+    auto args = ["program.name", "-vfoo=0,bar=1,baz=2"].dup;
+    getopt(args, "values|v", &values);
+    assert(values == ["foo":0, "bar":1, "baz":2], to!string(values));
+
+    values = values.init;
+    args = ["program.name", "-v", "foo=0,bar=1,baz=2"].dup;
+    getopt(args, "values|v", &values);
+    assert(values == ["foo":0, "bar":1, "baz":2], to!string(values));
+
+    values = values.init;
+    args = ["program.name", "--values=foo=0,bar=1,baz=2"];
+    getopt(args, "values|t", &values);
+    assert(values == ["foo":0, "bar":1, "baz":2], to!string(values));
+
+    values = values.init;
+    args = ["program.name", "--values", "foo=0,bar=1,baz=2"].dup;
+    getopt(args, "values|v", &values);
+    assert(values == ["foo":0, "bar":1, "baz":2], to!string(values));
 }
 
 /**
-   The option character (default '-'). 
+   The option character (default '-').
 
    Defaults to '-' but it can be assigned to prior to calling $(D getopt).
  */
 dchar optionChar = '-';
 
 /**
-   The string that conventionally marks the end of all options (default '--'). 
+   The string that conventionally marks the end of all options (default '--').
 
-   Defaults to "--" but can be assigned to prior to calling $(D getopt). Assigning an 
+   Defaults to "--" but can be assigned to prior to calling $(D getopt). Assigning an
    empty string to $(D endOfOptions) effectively disables it.
  */
 string endOfOptions = "--";
 
 /**
-   The assignment character used in options with parameters (default '='). 
+   The assignment character used in options with parameters (default '=').
 
    Defaults to '=' but can be assigned to prior to calling $(D getopt).
  */
 dchar assignChar = '=';
+
+/**
+   The string used to separate the elements of an array or associative array
+   (default is "" which means the elements are separated by whitespace).
+
+   Defaults to "" but can be assigned to prior to calling $(D getopt).
+ */
+string arraySep = "";
 
 enum autoIncrementChar = '+';
 
@@ -587,7 +873,8 @@ private struct configuration
                 bool, "bundling", 1,
                 bool, "passThrough", 1,
                 bool, "stopOnFirstNonOption", 1,
-                ubyte, "", 4));
+                bool, "required", 1,
+                ubyte, "", 3));
 }
 
 private bool optMatch(string arg, string optPattern, ref string value,
@@ -651,6 +938,7 @@ private void setConfig(ref configuration cfg, config option)
     case config.noBundling: cfg.bundling = false; break;
     case config.passThrough: cfg.passThrough = true; break;
     case config.noPassThrough: cfg.passThrough = false; break;
+    case config.required: cfg.required = true; break;
     case config.stopOnFirstNonOption:
         cfg.stopOnFirstNonOption = true; break;
     default: assert(false);
@@ -698,16 +986,30 @@ unittest
              "--output", "yourfile.txt"]).dup;
     getopt(args, "output", &outputFiles);
     assert(outputFiles.length == 2
-           && outputFiles[0] == "myfile.txt" && outputFiles[0] == "myfile.txt");
+           && outputFiles[0] == "myfile.txt" && outputFiles[1] == "yourfile.txt");
 
-    args = (["program.name", "--tune=alpha=0.5",
-             "--tune", "beta=0.6"]).dup;
-    double[string] tuningParms;
-    getopt(args, "tune", &tuningParms);
-    assert(args.length == 1);
-    assert(tuningParms.length == 2);
-    assert(approxEqual(tuningParms["alpha"], 0.5));
-    assert(approxEqual(tuningParms["beta"], 0.6));
+    outputFiles = [];
+    arraySep = ",";
+    args = (["program.name", "--output", "myfile.txt,yourfile.txt"]).dup;
+    getopt(args, "output", &outputFiles);
+    assert(outputFiles.length == 2
+           && outputFiles[0] == "myfile.txt" && outputFiles[1] == "yourfile.txt");
+    arraySep = "";
+
+    foreach (testArgs;
+        [["program.name", "--tune=alpha=0.5", "--tune", "beta=0.6"],
+         ["program.name", "--tune=alpha=0.5,beta=0.6"],
+         ["program.name", "--tune", "alpha=0.5,beta=0.6"]])
+    {
+        arraySep = ",";
+        double[string] tuningParms;
+        getopt(testArgs, "tune", &tuningParms);
+        assert(testArgs.length == 1);
+        assert(tuningParms.length == 2);
+        assert(approxEqual(tuningParms["alpha"], 0.5));
+        assert(approxEqual(tuningParms["beta"], 0.6));
+        arraySep = "";
+    }
 
     uint verbosityLevel = 1;
     void myHandler(string option)
@@ -876,6 +1178,16 @@ unittest
     assert(args == ["main", "-test"]);
 }
 
+unittest // 5228
+{
+    auto args = ["prog", "--foo=bar"];
+    int abc;
+    assertThrown!GetOptException(getopt(args, "abc", &abc));
+
+    args = ["prog", "--abc=string"];
+    assertThrown!ConvException(getopt(args, "abc", &abc));
+}
+
 unittest // From bugzilla 7693
 {
     enum Foo {
@@ -901,5 +1213,179 @@ unittest // same bug as 7693 only for bool
     assertThrown(getopt(args, "foo", &foo));
     args = ["prog", "--foo"];
     getopt(args, "foo", &foo);
-	assert(foo);
+    assert(foo);
+}
+
+unittest 
+{
+    bool foo;
+    auto args = ["prog", "--foo"];
+    getopt(args, "foo", &foo);
+    assert(foo);
+}
+
+unittest
+{
+    bool foo;
+    bool bar;
+    auto args = ["prog", "--foo", "-b"];
+    getopt(args, config.caseInsensitive,"foo|f" "Some foo", &foo,
+        config.caseSensitive, "bar|b", "Some bar", &bar);
+    assert(foo);
+    assert(bar);
+}
+
+unittest
+{
+    bool foo;
+    bool bar;
+    auto args = ["prog", "-b", "--foo", "-z"];
+    getopt(args, config.caseInsensitive, config.required, "foo|f" "Some foo", 
+        &foo, config.caseSensitive, "bar|b", "Some bar", &bar, 
+        config.passThrough);
+    assert(foo);
+    assert(bar);
+}
+
+unittest
+{
+    bool foo;
+    bool bar;
+    auto args = ["prog", "-b", "-z"];
+    assertThrown(getopt(args, config.caseInsensitive, config.required, "foo|f",
+        "Some foo", &foo, config.caseSensitive, "bar|b", "Some bar", &bar, 
+        config.passThrough));
+}
+
+unittest
+{
+    bool foo;
+    bool bar;
+    auto args = ["prog", "--foo", "-z"];
+    assertNotThrown(getopt(args, config.caseInsensitive, config.required, 
+        "foo|f", "Some foo", &foo, config.caseSensitive, "bar|b", "Some bar", 
+        &bar, config.passThrough));
+    assert(foo);
+    assert(!bar);
+}
+
+unittest
+{
+    bool foo;
+    auto args = ["prog", "-f"];
+    auto r = getopt(args, config.caseInsensitive, "help|f", "Some foo", &foo);
+    assert(foo);
+    assert(!r.helpWanted);
+}
+
+/** This function prints the passed $(D Option) and text in an aligned manner. 
+
+The passed text will be printed first, followed by a newline. Than the short
+and long version of every option will be printed. The short and long version
+will be aligned to the longest option of every $(D Option) passed. If a help
+message is present it will be printed after the long version of the 
+$(D Option).
+
+------------
+foreach(it; opt) {
+    writefln("%*s %*s %s", lengthOfLongestShortOption, it.optShort,
+        lengthOfLongestLongOption, it.optLong, it.help);
+}
+------------
+
+Params:
+    text = The text to printed at the beginning of the help output.
+    opt = The $(D Option) extracted from the $(D getoptX) parameter.
+*/
+void defaultGetoptPrinter(string text, Option[] opt) 
+{
+    import std.stdio : stdout;
+
+    defaultGetoptFormatter(stdout.lockingTextWriter(), text, opt);
+}
+
+/** This function writes the passed text and $(D Option) into an output range
+in the manner, described in the documentation of function 
+$(D defaultGetoptXPrinter).
+
+Params:
+    output = The output range used to write the help information.
+    text = The text to printed at the beginning of the help output.
+    opt = The $(D Option) extracted from the $(D getoptX) parameter.
+*/
+void defaultGetoptFormatter(Output)(Output output, string text, Option[] opt) {
+    import std.format : formattedWrite;
+
+    output.formattedWrite("%s\n", text);
+
+    size_t ls, ll;
+    bool hasRequired = false;
+    foreach (it; opt) 
+    {
+        ls = max(ls, it.optShort.length);    
+        ll = max(ll, it.optLong.length);    
+
+        hasRequired = hasRequired || it.required;
+    }
+
+    size_t argLength = ls + ll + 2;
+
+    string re = " Required: ";
+
+    foreach (it; opt) 
+    {
+        output.formattedWrite("%*s %*s%*s%s\n", ls, it.optShort, ll, it.optLong,
+            hasRequired ? re.length : 1, it.required ? re : " ", it.help);
+    }
+}
+
+unittest
+{
+    bool a;
+    auto args = ["prog", "--foo"];
+    auto t = getopt(args, "foo|f", "Help", &a);
+    string s;
+    auto app = appender!string();
+    defaultGetoptFormatter(app, "Some Text", t.options);
+
+    string helpMsg = app.data;
+    //writeln(helpMsg);
+    assert(helpMsg.length);
+    assert(helpMsg.count("\n") == 3, to!string(helpMsg.count("\n")) ~ " "
+        ~ helpMsg);
+    assert(helpMsg.indexOf("--foo") != -1);
+    assert(helpMsg.indexOf("-f") != -1);
+    assert(helpMsg.indexOf("-h") != -1);
+    assert(helpMsg.indexOf("--help") != -1);
+    assert(helpMsg.indexOf("Help") != -1);
+    
+    string wanted = "Some Text\n-f  --foo Help\n-h --help This help "
+        ~ "information.\n";
+    assert(wanted == helpMsg);
+}
+
+unittest
+{
+    bool a;
+    auto args = ["prog", "--foo"];
+    auto t = getopt(args, config.required, "foo|f", "Help", &a);
+    string s;
+    auto app = appender!string();
+    defaultGetoptFormatter(app, "Some Text", t.options);
+
+    string helpMsg = app.data;
+    //writeln(helpMsg);
+    assert(helpMsg.length);
+    assert(helpMsg.count("\n") == 3, to!string(helpMsg.count("\n")) ~ " "
+        ~ helpMsg);
+    assert(helpMsg.indexOf("Required:") != -1);
+    assert(helpMsg.indexOf("--foo") != -1);
+    assert(helpMsg.indexOf("-f") != -1);
+    assert(helpMsg.indexOf("-h") != -1);
+    assert(helpMsg.indexOf("--help") != -1);
+    assert(helpMsg.indexOf("Help") != -1);
+    
+    string wanted = "Some Text\n-f  --foo Required: Help\n-h --help " 
+        "          This help information.\n";
+    assert(wanted == helpMsg, helpMsg ~ wanted);
 }

@@ -127,7 +127,7 @@ class MmFile
         if (prot & PROT_WRITE && size > statbuf.st_size)
         {
             // Need to make the file size bytes big
-            lseek(fd, cast(int)(size - 1), SEEK_SET);
+            lseek(fd, cast(off_t)(size - 1), SEEK_SET);
             char c = 0;
             core.sys.posix.unistd.write(fd, &c, 1);
         }
@@ -236,7 +236,7 @@ class MmFile
             if (hFile != INVALID_HANDLE_VALUE)
             {
                 int hi = cast(int)(size>>32);
-                hFileMap = CreateFileMappingA(hFile, null, flProtect,
+                hFileMap = CreateFileMappingW(hFile, null, flProtect,
                         hi, cast(uint)size, null);
             }
             if (hFileMap != null)               // mapping didn't fail
@@ -331,7 +331,7 @@ class MmFile
                 if (prot & PROT_WRITE && size > statbuf.st_size)
                 {
                     // Need to make the file size bytes big
-                    .lseek(fd, cast(int)(size - 1), SEEK_SET);
+                    .lseek(fd, cast(off_t)(size - 1), SEEK_SET);
                     char c = 0;
                     core.sys.posix.unistd.write(fd, &c, 1);
                 }
@@ -341,6 +341,7 @@ class MmFile
             else
             {
                 fd = -1;
+                version(linux) import core.sys.linux.sys.mman : MAP_ANON;                
                 flags |= MAP_ANON;
             }
             this.size = size;
@@ -509,7 +510,7 @@ class MmFile
             p = MapViewOfFileEx(hFileMap, dwDesiredAccess, hi, cast(uint)start, len, address);
             errnoEnforce(p);
         } else {
-            p = mmap(address, len, prot, flags, fd, cast(int)start);
+            p = mmap(address, len, prot, flags, fd, cast(off_t)start);
             errnoEnforce(p != MAP_FAILED);
         }
         data = p[0 .. len];
@@ -601,6 +602,8 @@ private:
 
 unittest
 {
+    import std.file : deleteme;
+
     const size_t K = 1024;
     size_t win = 64*K; // assume the page size is 64K
     version(Windows) {
@@ -612,7 +615,8 @@ unittest
     } else version (linux) {
         // getpagesize() is not defined in the unix D headers so use the guess
     }
-    MmFile mf = new MmFile("testing.txt",MmFile.Mode.readWriteNew,
+    string test_file = std.file.deleteme ~ "-testing.txt";
+    MmFile mf = new MmFile(test_file,MmFile.Mode.readWriteNew,
             100*K,null,win);
     ubyte[] str = cast(ubyte[])"1234567890";
     ubyte[] data = cast(ubyte[])mf[0 .. 10];
@@ -629,7 +633,7 @@ unittest
     assert( data2.length == 79*K );
     assert( data2[$-1] == 'b' );
     delete mf;
-    std.file.remove("testing.txt");
+    std.file.remove(test_file);
     // Create anonymous mapping
     auto test = new MmFile(null, MmFile.Mode.readWriteNew, 1024*1024, null);
 }
