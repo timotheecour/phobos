@@ -178,7 +178,7 @@ version (Windows)
 /*  Helper functions that strip leading/trailing slashes and backslashes
     from a path.
 */
-private auto ltrimDirSeparators(R)(inout R path)
+private auto ltrimDirSeparators(R)(R path)
     if (isRandomAccessRange!R && hasSlicing!R && isSomeChar!(ElementType!R) ||
         isNarrowString!R)
 {
@@ -187,7 +187,7 @@ private auto ltrimDirSeparators(R)(inout R path)
     return path[i .. path.length];
 }
 
-private auto rtrimDirSeparators(R)(inout R path)
+private auto rtrimDirSeparators(R)(R path)
     if (isRandomAccessRange!R && hasSlicing!R && isSomeChar!(ElementType!R) ||
         isNarrowString!R)
 {
@@ -196,7 +196,7 @@ private auto rtrimDirSeparators(R)(inout R path)
     return path[0 .. i+1];
 }
 
-private auto trimDirSeparators(R)(inout R path)
+private auto trimDirSeparators(R)(R path)
     if (isRandomAccessRange!R && isSomeChar!(ElementType!R) ||
         isNarrowString!R)
 {
@@ -2595,9 +2595,6 @@ unittest
 
 /** Checks that the given file or directory name is valid.
 
-    This function returns $(D true) if and only if $(D filename) is not
-    empty, not too long, and does not contain invalid characters.
-
     The maximum length of $(D filename) is given by the constant
     $(D core.stdc.stdio.FILENAME_MAX).  (On Windows, this number is
     defined as the maximum number of UTF-16 code points, and the
@@ -2617,10 +2614,20 @@ unittest
 
     On POSIX, $(D filename) may not contain a forward slash ($(D '/')) or
     the null character ($(D '\0')).
+
+    Params:
+        filename = string to check
+
+    Returns:
+        $(D true) if and only if $(D filename) is not
+        empty, not too long, and does not contain invalid characters.
+
 */
-bool isValidFilename(R)(R filename)
-    if (isRandomAccessRange!R && isSomeChar!(ElementType!R) ||
-        is(StringTypeOf!R))
+bool isValidFilename(Range)(Range filename)
+    if (is(StringTypeOf!Range) ||
+        isRandomAccessRange!Range &&
+        hasLength!Range && hasSlicing!Range &&
+        isSomeChar!(ElementEncodingType!Range))
 {
     import core.stdc.stdio : FILENAME_MAX;
     if (filename.length == 0 || filename.length >= FILENAME_MAX) return false;
@@ -2664,7 +2671,16 @@ bool isValidFilename(R)(R filename)
     return true;
 }
 
+///
+@safe pure @nogc nothrow
+unittest
+{
+    import std.utf : byCodeUnit;
 
+    assert(isValidFilename("hello.exe".byCodeUnit));
+}
+
+@safe pure
 unittest
 {
     import std.conv;
@@ -2692,8 +2708,20 @@ unittest
 
     static struct DirEntry { string s; alias s this; }
     assert(isValidFilename(DirEntry("file.ext")));
-}
 
+    version (Windows)
+    {
+        immutable string cases = "<>:\"/\\|?*";
+        foreach (i; 0 .. 31 + cases.length)
+        {
+            char[3] buf;
+            buf[0] = 'a';
+            buf[1] = i <= 31 ? cast(char)i : cases[i - 32];
+            buf[2] = 'b';
+            assert(!isValidFilename(buf[]));
+        }
+    }
+}
 
 
 
@@ -2720,14 +2748,26 @@ unittest
             this function returns $(D false); such paths are beyond the scope
             of this module.)
     )
+
+    Params:
+        path = string or Range of characters to check
+
+    Returns:
+        true if $(D path) is a valid _path.
 */
-bool isValidPath(C)(in C[] path)  @safe pure nothrow  if (isSomeChar!C)
+bool isValidPath(Range)(Range path)
+    if (is(StringTypeOf!Range) ||
+        isRandomAccessRange!Range &&
+        hasLength!Range && hasSlicing!Range &&
+        isSomeChar!(ElementEncodingType!Range))
 {
+    alias C = Unqual!(ElementEncodingType!Range);
+
     if (path.empty) return false;
 
     // Check whether component is "." or "..", or whether it satisfies
     // isValidFilename.
-    bool isValidComponent(in C[] component)  @safe pure nothrow
+    bool isValidComponent(Range component)
     {
         assert (component.length > 0);
         if (component[0] == '.')
@@ -2741,7 +2781,7 @@ bool isValidPath(C)(in C[] path)  @safe pure nothrow  if (isSomeChar!C)
     if (path.length == 1)
         return isDirSeparator(path[0]) || isValidComponent(path);
 
-    const(C)[] remainder;
+    Range remainder;
     version (Windows)
     {
         if (isDirSeparator(path[0]) && isDirSeparator(path[1]))
@@ -2797,7 +2837,6 @@ bool isValidPath(C)(in C[] path)  @safe pure nothrow  if (isSomeChar!C)
         remainder = path;
     }
     else static assert (0);
-    assert (remainder !is null);
     remainder = ltrimDirSeparators(remainder);
 
     // Check that each component satisfies isValidComponent.
@@ -2815,10 +2854,14 @@ bool isValidPath(C)(in C[] path)  @safe pure nothrow  if (isSomeChar!C)
 }
 
 
+///
+@safe pure @nogc nothrow
 unittest
 {
     assert (isValidPath("/foo/bar"));
     assert (!isValidPath("/foo\0/bar"));
+    assert (isValidPath("/"));
+    assert (isValidPath("a"));
 
     version (Windows)
     {
@@ -2843,7 +2886,11 @@ unittest
         assert (!isValidPath("\\\\?\\foo\0bar"));
 
         assert (!isValidPath(`\\.\PhysicalDisk1`));
+        assert (!isValidPath(`\\`));
     }
+
+    import std.utf : byCodeUnit;
+    assert (isValidPath("/foo/bar".byCodeUnit));
 }
 
 
@@ -2890,12 +2937,12 @@ unittest
     }
     -----
 */
-string expandTilde(string inputPath)
+string expandTilde(string inputPath) nothrow
 {
     version(Posix)
     {
         import core.stdc.string : strlen;
-        import core.stdc.stdlib : getenv, malloc, free;
+        import core.stdc.stdlib : getenv, malloc, free, realloc;
         import core.exception : onOutOfMemoryError;
         import core.sys.posix.pwd : passwd, getpwnam_r;
         import core.stdc.errno : errno, ERANGE;
@@ -2906,7 +2953,7 @@ string expandTilde(string inputPath)
             is joined to path[char_pos .. length] if char_pos is smaller
             than length, otherwise path is not appended to c_path.
         */
-        static string combineCPathWithDPath(char* c_path, string path, size_t char_pos)
+        static string combineCPathWithDPath(char* c_path, string path, size_t char_pos) nothrow
         {
             assert(c_path != null);
             assert(path.length > 0);
@@ -2919,18 +2966,20 @@ string expandTilde(string inputPath)
             if (end && isDirSeparator(c_path[end - 1]))
                 end--;
 
-            // Create our own copy, as lifetime of c_path is undocumented
-            string cp = c_path[0 .. end].idup;
-
-            // Do we append something from path?
+            // (this is the only GC allocation done in expandTilde())
+            string cp;
             if (char_pos < path.length)
-                cp ~= path[char_pos .. $];
+                // Append something from path
+                cp = cast(string)(c_path[0 .. end] ~ path[char_pos .. $]);
+            else
+                // Create our own copy, as lifetime of c_path is undocumented
+                cp = c_path[0 .. end].idup;
 
             return cp;
         }
 
         // Replaces the tilde from path with the environment variable HOME.
-        static string expandFromEnvironment(string path)
+        static string expandFromEnvironment(string path) nothrow
         {
             assert(path.length >= 1);
             assert(path[0] == '~');
@@ -2944,7 +2993,7 @@ string expandTilde(string inputPath)
         }
 
         // Replaces the tilde from path with the path from the user database.
-        static string expandFromDatabase(string path)
+        static string expandFromDatabase(string path) nothrow
         {
             // Android doesn't really support this, as getpwnam_r
             // isn't provided and getpwnam is basically just a stub
@@ -2960,64 +3009,59 @@ string expandTilde(string inputPath)
                 assert(path[0] == '~');
 
                 // Extract username, searching for path separator.
-                string username;
                 auto last_char = indexOf(path, dirSeparator[0]);
+
+                size_t username_len = (last_char == -1) ? path.length : last_char;
+                char* username = cast(char*)core.stdc.stdlib.malloc(username_len * char.sizeof);
+                if (!username)
+                    onOutOfMemoryError();
+                scope(exit) core.stdc.stdlib.free(username);
 
                 if (last_char == -1)
                 {
-                    username = path[1 .. $] ~ '\0';
-                    last_char = username.length + 1;
+                    username[0 .. username_len - 1] = path[1 .. $];
+                    last_char = path.length + 1;
                 }
                 else
                 {
-                    username = path[1 .. last_char] ~ '\0';
+                    username[0 .. username_len - 1] = path[1 .. last_char];
                 }
+                username[username_len - 1] = 0;
+
                 assert(last_char > 1);
 
                 // Reserve C memory for the getpwnam_r() function.
-                passwd result;
                 int extra_memory_size = 5 * 1024;
-                void* extra_memory;
+                char* extra_memory;
+                scope(exit) core.stdc.stdlib.free(extra_memory);
 
+                passwd result;
                 while (1)
                 {
-                    extra_memory = core.stdc.stdlib.malloc(extra_memory_size);
+                    extra_memory = cast(char*)core.stdc.stdlib.realloc(extra_memory, extra_memory_size * char.sizeof);
                     if (extra_memory == null)
-                        goto Lerror;
+                        onOutOfMemoryError();
 
                     // Obtain info from database.
                     passwd *verify;
                     errno = 0;
-                    if (getpwnam_r(cast(char*) username.ptr, &result, cast(char*) extra_memory, extra_memory_size,
+                    if (getpwnam_r(username, &result, extra_memory, extra_memory_size,
                             &verify) == 0)
                     {
-                        // Failure if verify doesn't point at result.
-                        if (verify != &result)
-                            // username is not found, so return path[]
-                            goto Lnotfound;
+                        // Succeeded if verify points at result
+                        if (verify == &result)
+                            // username is found
+                            path = combineCPathWithDPath(result.pw_dir, path, last_char);
                         break;
                     }
 
                     if (errno != ERANGE)
-                        goto Lerror;
+                        onOutOfMemoryError();
 
                     // extra_memory isn't large enough
-                    core.stdc.stdlib.free(extra_memory);
                     extra_memory_size *= 2;
                 }
-
-                path = combineCPathWithDPath(result.pw_dir, path, last_char);
-
-            Lnotfound:
-                core.stdc.stdlib.free(extra_memory);
                 return path;
-
-            Lerror:
-                // Errors are going to be caused by running out of memory
-                if (extra_memory)
-                    core.stdc.stdlib.free(extra_memory);
-                onOutOfMemoryError();
-                return null;
             }
         }
 

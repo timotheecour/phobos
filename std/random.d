@@ -32,7 +32,7 @@ distribution in various ways. So far the uniform distribution for
 integers and real numbers have been implemented.
 
 Upgrading:
-        $(WEB digitalmars.com/d/1.0/phobos/std_random.html#rand) can
+        $(WEB digitalmars.com/d/1.0/phobos/std_random.html#rand Phobos D1 $(D rand())) can
         be replaced with $(D uniform!uint()).
 
 Source:    $(PHOBOSSRC std/_random.d)
@@ -45,12 +45,12 @@ WIKI = Phobos/StdRandom
 Copyright: Copyright Andrei Alexandrescu 2008 - 2009, Joseph Rushton Wakeling 2012.
 License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
 Authors:   $(WEB erdani.org, Andrei Alexandrescu)
-           Masahiro Nakagawa (Xorshift randome generator)
+           Masahiro Nakagawa (Xorshift random generator)
            $(WEB braingam.es, Joseph Rushton Wakeling) (Algorithm D for random sampling)
 Credits:   The entire random number library architecture is derived from the
            excellent $(WEB open-std.org/jtc1/sc22/wg21/docs/papers/2007/n2461.pdf, C++0X)
            random number facility proposed by Jens Maurer and contributed to by
-           researchers at the Fermi laboratory(excluding Xorshift).
+           researchers at the Fermi laboratory (excluding Xorshift).
 */
 /*
          Copyright Andrei Alexandrescu 2008 - 2009.
@@ -1726,18 +1726,22 @@ body
     {
         immutable T u = (rng.front - rng.min) * factor;
         rng.popFront();
-        static if (isIntegral!R)
+
+        import core.stdc.limits : CHAR_BIT;  // CHAR_BIT is always 8
+        static if (isIntegral!R && T.mant_dig >= (CHAR_BIT * R.sizeof))
         {
-            /* if RNG variates are integral, we're guaranteed
-             * by the definition of factor that u < 1.
+            /* If RNG variates are integral and T has enough precision to hold
+             * R without loss, we're guaranteed by the definition of factor
+             * that precisely u < 1.
              */
             return u;
         }
         else
         {
-            /* Otherwise we have to check, just in case a
-             * floating-point RNG returns a variate that is
-             * exactly equal to its maximum
+            /* Otherwise we have to check whether u is beyond the assumed range
+             * because of the loss of precision, or for another reason, a
+             * floating-point RNG can return a variate that is exactly equal to
+             * its maximum.
              */
             if (u < 1)
             {
@@ -2326,7 +2330,7 @@ struct RandomSample(Range, UniformRNG = void)
     private double _Vprime;
     private Range _input;
     private size_t _index;
-    private enum Skip { None, A, D };
+    private enum Skip { None, A, D }
     private Skip _skip = Skip.None;
 
     // If we're using the default thread-local random number generator then

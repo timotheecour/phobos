@@ -28,7 +28,7 @@ module std.bitmanip;
 //debug = bitarray;                // uncomment to turn on debugging printf's
 
 import std.range.primitives;
-import std.system;
+public import std.system : Endian;
 import std.traits;
 
 version(unittest)
@@ -1260,7 +1260,6 @@ public:
      * these will be set to 0.
      *
      * This is the inverse of $(D opCast).
-     * $(RED Will be deprecated in 2.068. Please use the constructor instead.)
      */
     this(void[] v, size_t numbits) pure nothrow
     in
@@ -3190,8 +3189,9 @@ unittest
 
     Params:
         T     = The integral type to convert the first $(D T.sizeof) bytes to.
-        endianness = The endianness to write the bytes in.
-        range = The range to write to.
+        endianness = The endianness to _write the bytes in.
+        range = The range to _write to.
+        value = The value to _write.
         index = The index to start writing to. If index is a pointer, then it
                 is updated to the index after the bytes read.
   +/
@@ -3536,7 +3536,8 @@ unittest
     Params:
         T     = The integral type to convert the first $(D T.sizeof) bytes to.
         endianness = The endianness to write the bytes in.
-        range = The range to append to.
+        range = The range to _append to.
+        value = The value to _append.
   +/
 void append(T, Endian endianness = Endian.bigEndian, R)(R range, T value)
     if(canSwapEndianness!T && isOutputRange!(R, ubyte))

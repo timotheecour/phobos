@@ -1,6 +1,6 @@
 // Written in the D programming language.
 /**
-This is a submodule of $(LINK2 std_algorithm_package.html, std.algorithm).
+This is a submodule of $(LINK2 std_algorithm.html, std.algorithm).
 It contains generic _sorting algorithms.
 
 $(BOOKTABLE Cheat Sheet,
@@ -21,6 +21,8 @@ $(T2 isSorted,
         $(D isSorted([1, 1, 2, 3])) returns $(D true).)
 $(T2 makeIndex,
         Creates a separate index for a range.)
+$(T2 multiSort,
+        Sorts by multiple keys.)
 $(T2 nextEvenPermutation,
         Computes the next lexicographically greater even permutation of a range
         in-place.)
@@ -61,13 +63,22 @@ T2=$(TR $(TDNW $(LREF $1)) $(TD $+))
  */
 module std.algorithm.sorting;
 
-import std.algorithm : SortOutput; // FIXME
 import std.algorithm.mutation : SwapStrategy;
 import std.functional; // : unaryFun, binaryFun;
 import std.range.primitives;
 // FIXME
 import std.range; // : SortedRange;
 import std.traits;
+
+/**
+Specifies whether the output of certain algorithm is desired in sorted
+format.
+ */
+enum SortOutput
+{
+    no,  /// Don't sort output
+    yes, /// Sort output
+}
 
 // completeSort
 /**
@@ -182,6 +193,80 @@ bool isSorted(alias less = "a < b", Range)(Range r) if (isForwardRange!(Range))
     string s = to!string(ds);
     assert(isSorted(ds));  // random-access
     assert(isSorted(s));   // bidirectional
+}
+
+/**
+Like $(D isSorted), returns $(D true) if the given $(D values) are ordered
+according to the comparison operation $(D less). Unlike $(D isSorted), takes values
+directly instead of structured in a range.
+
+$(D ordered) allows repeated values, e.g. $(D ordered(1, 1, 2)) is $(D true). To verify
+that the values are ordered strictly monotonically, use $(D strictlyOrdered);
+$(D strictlyOrdered(1, 1, 2)) is $(D false).
+
+With either function, the predicate must be a strict ordering just like with $(D isSorted). For
+example, using $(D "a <= b") instead of $(D "a < b") is incorrect and will cause failed
+assertions.
+
+Params:
+    values = The tested value
+    less = The comparison predicate
+
+Returns:
+    $(D true) if the values are ordered; $(D ordered) allows for duplicates,
+    $(D strictlyOrdered) does not.
+*/
+
+bool ordered(alias less = "a < b", T...)(T values)
+if ((T.length == 2 && is(typeof(binaryFun!less(values[1], values[0])) : bool))
+    ||
+    (T.length > 2 && is(typeof(ordered!less(values[0 .. 1 + $ / 2])))
+        && is(typeof(ordered!less(values[$ / 2 .. $]))))
+    )
+{
+    foreach (i, _; T[0 .. $ - 1])
+    {
+        if (binaryFun!less(values[i + 1], values[i]))
+        {
+            assert(!binaryFun!less(values[i], values[i + 1]),
+                __FUNCTION__ ~ ": incorrect non-strict predicate.");
+            return false;
+        }
+    }
+    return true;
+}
+
+/// ditto
+bool strictlyOrdered(alias less = "a < b", T...)(T values)
+if (is(typeof(ordered!less(values))))
+{
+    foreach (i, _; T[0 .. $ - 1])
+    {
+        if (!binaryFun!less(values[i], values[i + 1]))
+        {
+            return false;
+        }
+        assert(!binaryFun!less(values[i + 1], values[i]),
+            __FUNCTION__ ~ ": incorrect non-strict predicate.");
+    }
+    return true;
+}
+
+///
+unittest
+{
+    assert(ordered(42, 42, 43));
+    assert(!strictlyOrdered(43, 42, 45));
+    assert(ordered(42, 42, 43));
+    assert(!strictlyOrdered(42, 42, 43));
+    assert(!ordered(43, 42, 45));
+    // Ordered lexicographically
+    assert(ordered("Jane", "Jim", "Joe"));
+    assert(strictlyOrdered("Jane", "Jim", "Joe"));
+    // Incidentally also ordered by length decreasing
+    assert(ordered!((a, b) => a.length > b.length)("Jane", "Jim", "Joe"));
+    // ... but not strictly so: "Jim" and "Joe" have the same length
+    assert(!strictlyOrdered!((a, b) => a.length > b.length)("Jane", "Jim", "Joe"));
 }
 
 // partition
@@ -333,7 +418,7 @@ Range partition(alias predicate,
 
 @safe unittest
 {
-    import std.algorithm : rndstuff; // FIXME
+    import std.algorithm.internal : rndstuff;
     static bool even(int a) { return (a & 1) == 0; }
 
     // test with random data
@@ -514,7 +599,7 @@ makeIndex(
     if (isForwardRange!(Range) && isRandomAccessRange!(RangeIndex)
             && is(ElementType!(RangeIndex) : ElementType!(Range)*))
 {
-    import std.algorithm : addressOf; // FIXME
+    import std.algorithm.internal : addressOf;
     import std.exception : enforce;
 
     // assume collection already ordered
@@ -923,7 +1008,7 @@ unittest
 
 unittest
 {
-    import std.algorithm : rndstuff; // FIXME
+    import std.algorithm.internal : rndstuff;
     import std.algorithm : swapRanges; // FIXME
     import std.random : Random, unpredictableSeed, uniform;
     import std.uni : toUpper;
@@ -1192,11 +1277,7 @@ private template TimSortImpl(alias pred, R)
         size_t stackLen = 0;
 
         // Allocate temporary memory if not provided by user
-        if (temp.length < minTemp)
-        {
-            if (__ctfe) temp.length = minTemp;
-            else temp = uninitializedArray!(T[])(minTemp);
-        }
+        if (temp.length < minTemp) temp = uninitializedArray!(T[])(minTemp);
 
         for (size_t i = 0; i < range.length; )
         {
@@ -1216,26 +1297,39 @@ private template TimSortImpl(alias pred, R)
             stack[stackLen++] = Slice(i, runLen);
             i += runLen;
 
-            // Collapse stack so that (e1 >= e2 + e3 && e2 >= e3)
+            // Collapse stack so that (e1 > e2 + e3 && e2 > e3)
             // STACK is | ... e1 e2 e3 >
             while (stackLen > 1)
             {
-                immutable run3 = stackLen - 1;
-                immutable run2 = stackLen - 2;
-                immutable run1 = stackLen - 3;
-                if (stackLen >= 3 && stack[run1].length <= stack[run2].length + stack[run3].length)
+                immutable run4 = stackLen - 1;
+                immutable run3 = stackLen - 2;
+                immutable run2 = stackLen - 3;
+                immutable run1 = stackLen - 4;
+
+                if ( (stackLen > 2 && stack[run2].length <= stack[run3].length + stack[run4].length) ||
+                     (stackLen > 3 && stack[run1].length <= stack[run3].length + stack[run2].length) )
                 {
-                    immutable at = stack[run1].length <= stack[run3].length
-                        ? run1 : run2;
+                    immutable at = stack[run2].length < stack[run4].length ? run2 : run3;
                     mergeAt(range, stack[0 .. stackLen], at, minGallop, temp);
-                    --stackLen;
                 }
-                else if (stack[run2].length <= stack[run3].length)
+                else if (stack[run3].length > stack[run4].length) break;
+                else mergeAt(range, stack[0 .. stackLen], run3, minGallop, temp);
+
+                stackLen -= 1;
+            }
+
+            // Assert that the code above established the invariant correctly
+            version (assert)
+            {
+                if (stackLen == 2) assert(stack[0].length > stack[1].length);
+                else if (stackLen > 2)
                 {
-                    mergeAt(range, stack[0 .. stackLen], run2, minGallop, temp);
-                    --stackLen;
+                    foreach(k; 2 .. stackLen)
+                    {
+                        assert(stack[k - 2].length > stack[k - 1].length + stack[k].length);
+                        assert(stack[k - 1].length > stack[k].length);
+                    }
                 }
-                else break;
             }
         }
 
@@ -1323,7 +1417,7 @@ private template TimSortImpl(alias pred, R)
     in
     {
         assert(stack.length >= 2);
-        assert(at == stack.length - 2 || at == stack.length - 3);
+        assert(stack.length - at == 2 || stack.length - at == 3);
     }
     body
     {
@@ -1333,7 +1427,7 @@ private template TimSortImpl(alias pred, R)
 
         // Pop run from stack
         stack[at] = Slice(base, len);
-        if (at == stack.length - 3) stack[$ - 2] = stack[$ - 1];
+        if (stack.length - at == 3) stack[$ - 2] = stack[$ - 1];
 
         // Merge runs (at, at + 1)
         return merge(range[base .. base + len], mid, minGallop, temp);
@@ -1760,6 +1854,14 @@ unittest
     assert(y == "aebcd"d);
 }
 
+unittest
+{
+    // Issue 14223
+    import std.range, std.array;
+    auto arr = chain(iota(0, 384), iota(0, 256), iota(0, 80), iota(0, 64), iota(0, 96)).array;
+    sort!("a < b", SwapStrategy.stable)(arr);
+}
+
 // schwartzSort
 /**
 Sorts a range using an algorithm akin to the $(WEB
@@ -1871,9 +1973,9 @@ unittest
         return result;
     }
 
-    auto lowEnt = ([ 1.0, 0, 0 ]).dup,
-         midEnt = ([ 0.1, 0.1, 0.8 ]).dup,
-        highEnt = ([ 0.31, 0.29, 0.4 ]).dup;
+    auto lowEnt = [ 1.0, 0, 0 ],
+         midEnt = [ 0.1, 0.1, 0.8 ],
+        highEnt = [ 0.31, 0.29, 0.4 ];
     auto arr = new double[][3];
     arr[0] = midEnt;
     arr[1] = lowEnt;
@@ -1904,9 +2006,9 @@ unittest
         return result;
     }
 
-    auto lowEnt = ([ 1.0, 0, 0 ]).dup,
-        midEnt = ([ 0.1, 0.1, 0.8 ]).dup,
-        highEnt = ([ 0.31, 0.29, 0.4 ]).dup;
+    auto lowEnt = [ 1.0, 0, 0 ],
+        midEnt = [ 0.1, 0.1, 0.8 ],
+        highEnt = [ 0.31, 0.29, 0.4 ];
     auto arr = new double[][3];
     arr[0] = midEnt;
     arr[1] = lowEnt;
@@ -2020,31 +2122,31 @@ void topN(alias less = "a < b",
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
     //scope(failure) writeln(stderr, "Failure testing algorithm");
-    //auto v = ([ 25, 7, 9, 2, 0, 5, 21 ]).dup;
+    //auto v = [ 25, 7, 9, 2, 0, 5, 21 ];
     int[] v = [ 7, 6, 5, 4, 3, 2, 1, 0 ];
     ptrdiff_t n = 3;
     topN!("a < b")(v, n);
     assert(reduce!max(v[0 .. n]) <= v[n]);
     assert(reduce!min(v[n + 1 .. $]) >= v[n]);
     //
-    v = ([3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5]).dup;
+    v = [3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5];
     n = 3;
     topN(v, n);
     assert(reduce!max(v[0 .. n]) <= v[n]);
     assert(reduce!min(v[n + 1 .. $]) >= v[n]);
     //
-    v = ([3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5]).dup;
+    v = [3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5];
     n = 1;
     topN(v, n);
     assert(reduce!max(v[0 .. n]) <= v[n]);
     assert(reduce!min(v[n + 1 .. $]) >= v[n]);
     //
-    v = ([3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5]).dup;
+    v = [3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5];
     n = v.length - 1;
     topN(v, n);
     assert(v[n] == 7);
     //
-    v = ([3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5]).dup;
+    v = [3, 4, 5, 6, 7, 2, 3, 4, 5, 6, 1, 2, 3, 4, 5];
     n = 0;
     topN(v, n);
     assert(v[n] == 1);

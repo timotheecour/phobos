@@ -35,15 +35,20 @@ SDKDIR=\Program Files (x86)\Microsoft SDKs\Windows\v7.0A
 #CFLAGS=/Zi /nologo /I"$(VCDIR)\INCLUDE" /I"$(SDKDIR)\Include"
 CFLAGS=/O2 /nologo /I"$(VCDIR)\INCLUDE" /I"$(SDKDIR)\Include"
 
+## Location of druntime tree
+
+DRUNTIME=..\druntime
+DRUNTIMELIB=$(DRUNTIME)\lib\druntime$(MODEL).lib
+
 ## Flags for dmd D compiler
 
-DFLAGS=-m$(MODEL) -O -release -w -dip25
+DFLAGS=-conf= -m$(MODEL) -O -release -w -dip25 -I$(DRUNTIME)\import
 #DFLAGS=-m$(MODEL) -unittest -g
 #DFLAGS=-m$(MODEL) -unittest -cov -g
 
 ## Flags for compiling unittests
 
-UDFLAGS=-g -m$(MODEL) -O -w -dip25
+UDFLAGS=-conf= -g -m$(MODEL) -O -w -dip25 -I$(DRUNTIME)\import
 
 ## C compiler, linker, librarian
 
@@ -65,11 +70,6 @@ STDDOC = $(DOCSRC)/html.ddoc $(DOCSRC)/dlang.org.ddoc $(DOCSRC)/std.ddoc $(DOCSR
 
 DOC=..\..\html\d\phobos
 #DOC=..\doc\phobos
-
-## Location of druntime tree
-
-DRUNTIME=..\druntime
-DRUNTIMELIB=$(DRUNTIME)\lib\druntime$(MODEL).lib
 
 ## Zlib library
 
@@ -94,10 +94,10 @@ targets : $(LIB)
 test : test.exe
 
 test.obj : test.d
-	$(DMD) -c -m$(MODEL) test -g -unittest
+	$(DMD) -conf= -c -m$(MODEL) test -g -unittest
 
 test.exe : test.obj $(LIB)
-	$(DMD) test.obj -m$(MODEL) -g -L/map
+	$(DMD) -conf= test.obj -m$(MODEL) -g -L/map
 
 #	ti_bit.obj ti_Abit.obj
 
@@ -137,7 +137,11 @@ SRC_STD_4= std\uuid.d $(SRC_STD_DIGEST)
 SRC_STD_ALGO= std\algorithm\package.d std\algorithm\comparison.d \
 	std\algorithm\iteration.d std\algorithm\mutation.d \
 	std\algorithm\searching.d std\algorithm\setops.d \
-	std\algorithm\sorting.d
+	std\algorithm\sorting.d std\algorithm\internal.d
+
+SRC_STD_LOGGER= std\experimental\logger\core.d std\experimental\logger\filelogger.d \
+	std\experimental\logger\multilogger.d std\experimental\logger\nulllogger.d \
+	std\experimental\logger\package.d
 
 SRC_STD_5_HEAVY= $(SRC_STD_ALGO)
 
@@ -203,10 +207,6 @@ SRC_STD_RANGE= std\range\package.d std\range\primitives.d \
 	std\range\interfaces.d
 
 SRC_STD_NET= std\net\isemail.d std\net\curl.d
-
-SRC_STD_LOGGER= std\experimental\logger\core.d std\experimental\logger\filelogger.d \
-	std\experimental\logger\multilogger.d std\experimental\logger\nulllogger.d \
-	std\experimental\logger\package.d
 
 SRC_STD_C= std\c\process.d std\c\stdlib.d std\c\time.d std\c\stdio.d \
 	std\c\math.d std\c\stdarg.d std\c\stddef.d std\c\fenv.d std\c\string.d \
@@ -317,7 +317,7 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\core_sync_mutex.html \
 	$(DOC)\core_sync_rwmutex.html \
 	$(DOC)\core_sync_semaphore.html \
-	$(DOC)\std_algorithm_package.html \
+	$(DOC)\std_algorithm.html \
 	$(DOC)\std_algorithm_comparison.html \
 	$(DOC)\std_algorithm_iteration.html \
 	$(DOC)\std_algorithm_mutation.html \
@@ -337,7 +337,7 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_container_dlist.html \
 	$(DOC)\std_container_rbtree.html \
 	$(DOC)\std_container_slist.html \
-	$(DOC)\std_container_package.html \
+	$(DOC)\std_container.html \
 	$(DOC)\std_container_util.html \
 	$(DOC)\std_conv.html \
 	$(DOC)\std_digest_crc.html \
@@ -365,7 +365,7 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_path.html \
 	$(DOC)\std_process.html \
 	$(DOC)\std_random.html \
-	$(DOC)\std_range_package.html \
+	$(DOC)\std_range.html \
 	$(DOC)\std_range_primitives.html \
 	$(DOC)\std_range_interfaces.html \
 	$(DOC)\std_regex.html \
@@ -394,7 +394,7 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_experimental_logger_filelogger.html \
 	$(DOC)\std_experimental_logger_multilogger.html \
 	$(DOC)\std_experimental_logger_nulllogger.html \
-	$(DOC)\std_experimental_logger_package.html \
+	$(DOC)\std_experimental_logger.html \
 	$(DOC)\std_windows_charset.html \
 	$(DOC)\std_windows_registry.html \
 	$(DOC)\std_c_fenv.html \
@@ -439,7 +439,8 @@ UNITTEST_OBJS= \
 		unittest6h.obj \
 		unittest6i.obj \
 		unittest6j.obj \
-		unittest7.obj
+		unittest7.obj \
+		unittest8.obj
 
 unittest : $(LIB)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest1.obj $(SRC_STD_1_HEAVY)
@@ -457,12 +458,12 @@ unittest : $(LIB)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6c.obj $(SRC_STD_6c)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6d.obj $(SRC_STD_6d)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6e.obj $(SRC_STD_6e)
-	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6h.obj $(SRC_STD_6h)
-	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6i.obj $(SRC_STD_6i)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6f.obj $(SRC_STD_6f)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6g.obj $(SRC_STD_CONTAINER)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6h.obj $(SRC_STD_6h)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6i.obj $(SRC_STD_6i)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6j.obj $(SRC_STD_6j)
-	$(DMD) $(UDFLAGS) -c -unittest -ofunittest7.obj $(SRC_STD_7)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest7.obj $(SRC_STD_7) $(SRC_STD_LOGGER)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest8.obj $(SRC_TO_COMPILE_NOT_STD)
 	$(DMD) $(UDFLAGS) -L/OPT:NOICF -unittest unittest.d $(UNITTEST_OBJS) \
 	    $(ZLIB) $(DRUNTIMELIB)
@@ -472,11 +473,11 @@ unittest : $(LIB)
 #	unittest
 #
 #unittest.exe : unittest.d $(LIB)
-#	$(DMD) unittest -g
+#	$(DMD) -conf= unittest -g
 #	dmc unittest.obj -g
 
 cov : $(SRC_TO_COMPILE) $(LIB)
-	$(DMD) -m$(MODEL) -cov -unittest -ofcov.exe unittest.d $(SRC_TO_COMPILE) $(LIB)
+	$(DMD) -conf= -m$(MODEL) -cov -unittest -ofcov.exe unittest.d $(SRC_TO_COMPILE) $(LIB)
 	cov
 
 html : $(DOCS)
@@ -546,8 +547,8 @@ $(DOC)\core_sync_rwmutex.html : $(STDDOC) $(DRUNTIME)\src\core\sync\rwmutex.d
 $(DOC)\core_sync_semaphore.html : $(STDDOC) $(DRUNTIME)\src\core\sync\semaphore.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\core_sync_semaphore.html $(STDDOC) $(DRUNTIME)\src\core\sync\semaphore.d -I$(DRUNTIME)\src\
 
-$(DOC)\std_algorithm_package.html : $(STDDOC) std\algorithm\package.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_algorithm_package.html $(STDDOC) std\algorithm\package.d
+$(DOC)\std_algorithm.html : $(STDDOC) std\algorithm\package.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_algorithm.html $(STDDOC) std\algorithm\package.d
 
 $(DOC)\std_algorithm_comparison.html : $(STDDOC) std\algorithm\comparison.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_algorithm_comparison.html $(STDDOC) std\algorithm\comparison.d
@@ -612,11 +613,11 @@ $(DOC)\std_container_slist.html : $(STDDOC) std\container\slist.d
 $(DOC)\std_container_util.html : $(STDDOC) std\container\util.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_container_util.html $(STDDOC) std\container\util.d
 
-$(DOC)\std_container_package.html : $(STDDOC) std\container\package.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_container_package.html $(STDDOC) std\container\package.d
+$(DOC)\std_container.html : $(STDDOC) std\container\package.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_container.html $(STDDOC) std\container\package.d
 
-$(DOC)\std_range_package.html : $(STDDOC) std\range\package.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_range_package.html $(STDDOC) std\range\package.d
+$(DOC)\std_range.html : $(STDDOC) std\range\package.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_range.html $(STDDOC) std\range\package.d
 
 $(DOC)\std_range_primitives.html : $(STDDOC) std\range\primitives.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_range_primitives.html $(STDDOC) std\range\primitives.d
@@ -765,8 +766,8 @@ $(DOC)\std_experimental_logger_filelogger.html : $(STDDOC) std\experimental\logg
 $(DOC)\std_experimental_logger_nulllogger.html : $(STDDOC) std\experimental\logger\nulllogger.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_experimental_logger_nulllogger.html $(STDDOC) std\experimental\logger\nulllogger.d
 
-$(DOC)\std_experimental_logger_package.html : $(STDDOC) std\experimental\logger\package.d
-	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_experimental_logger_package.html $(STDDOC) std\experimental\logger\package.d
+$(DOC)\std_experimental_logger.html : $(STDDOC) std\experimental\logger\package.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_experimental_logger.html $(STDDOC) std\experimental\logger\package.d
 
 $(DOC)\std_digest_crc.html : $(STDDOC) std\digest\crc.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_digest_crc.html $(STDDOC) std\digest\crc.d

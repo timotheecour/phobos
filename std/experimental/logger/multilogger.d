@@ -27,14 +27,14 @@ class MultiLogger : Logger
 
     Params:
       lv = The $(D LogLevel) for the $(D MultiLogger). By default the
-      $(D LogLevel) for $(D MultiLogger) is $(D LogLevel.info).
+      $(D LogLevel) for $(D MultiLogger) is $(D LogLevel.all).
 
     Example:
     -------------
     auto l1 = new MultiLogger(LogLevel.trace);
     -------------
     */
-    this(const LogLevel lv = LogLevel.info) @safe
+    this(const LogLevel lv = LogLevel.all) @safe
     {
         super(lv);
     }
@@ -69,13 +69,13 @@ class MultiLogger : Logger
     Logger removeLogger(in char[] toRemove) @safe
     {
         import std.algorithm : copy;
-        import std.range.interfaces : back, popBack;
+        import std.range.primitives : back, popBack;
         for (size_t i = 0; i < this.logger.length; ++i)
         {
             if (this.logger[i].name == toRemove)
             {
                 Logger ret = this.logger[i].logger;
-                this.logger[i] = this.logger.back();
+                this.logger[i] = this.logger.back;
                 this.logger.popBack();
 
                 return ret;

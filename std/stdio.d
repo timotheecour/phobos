@@ -44,26 +44,31 @@ version (linux)
 {
     // Specific to the way Gnu C does stdio
     version = GCC_IO;
+    version = HAS_GETDELIM;
 }
 
 version (OSX)
 {
     version = GENERIC_IO;
+    version = HAS_GETDELIM;
 }
 
 version (FreeBSD)
 {
     version = GENERIC_IO;
+    version = HAS_GETDELIM;
 }
 
 version (Solaris)
 {
     version = GENERIC_IO;
+    version = NO_GETDELIM;
 }
 
 version (Android)
 {
     version = GENERIC_IO;
+    version = NO_GETDELIM;
 }
 
 version(Windows)
@@ -140,7 +145,12 @@ else version (MICROSOFT_STDIO)
     enum
     {
         _O_RDONLY = 0x0000,
+        _O_WRONLY = 0x0001,
+        _O_RDWR   = 0x0002,
         _O_APPEND = 0x0004,
+        _O_CREAT  = 0x0100,
+        _O_TRUNC  = 0x0200,
+        _O_EXCL   = 0x0400,
         _O_TEXT   = 0x4000,
         _O_BINARY = 0x8000,
     }
@@ -161,8 +171,6 @@ else version (GCC_IO)
         int fgetwc_unlocked(_iobuf*);
         void flockfile(FILE*);
         void funlockfile(FILE*);
-        ptrdiff_t getline(char**, size_t*, FILE*);
-        ptrdiff_t getdelim (char**, size_t*, int, FILE*);
 
         private size_t fwrite_unlocked(const(void)* ptr,
                 size_t size, size_t n, _iobuf *stream);
@@ -211,6 +219,13 @@ else version (GENERIC_IO)
 else
 {
     static assert(0, "unsupported C I/O system");
+}
+
+version(HAS_GETDELIM) extern(C) nothrow @nogc
+{
+    ptrdiff_t getdelim(char**, size_t*, int, FILE*);
+    // getline() always comes together with getdelim()
+    ptrdiff_t getline(char**, size_t*, FILE*);
 }
 
 //------------------------------------------------------------------------------
@@ -325,14 +340,16 @@ Hello, Jimmy!
  */
 struct File
 {
-    import std.traits : isScalarType, isArray;
     import std.range.primitives : ElementEncodingType;
+    import std.traits : isScalarType, isArray;
+    enum Orientation { unknown, narrow, wide }
 
     private struct Impl
     {
         FILE * handle = null; // Is null iff this Impl is closed by another File
         uint refs = uint.max / 2;
         bool isPopened; // true iff the stream has been created by popen()
+        Orientation orientation;
     }
     private Impl* _p;
     private string _name;
@@ -347,6 +364,7 @@ struct File
         _p.handle = handle;
         _p.refs = refs;
         _p.isPopened = isPopened;
+        _p.orientation = Orientation.unknown;
         _name = name;
     }
 
@@ -373,6 +391,20 @@ Throws: $(D ErrnoException) if the file could not be opened.
                         text("Cannot open file `", name, "' in mode `",
                                 stdioOpenmode, "'")),
                 name);
+
+        // MSVCRT workaround (issue 14422)
+        version (MICROSOFT_STDIO)
+        {
+            bool append, update;
+            foreach (c; stdioOpenmode)
+                if (c == 'a')
+                    append = true;
+                else
+                if (c == '+')
+                    update = true;
+            if (append && !update)
+                seek(size);
+        }
     }
 
     ~this() @safe
@@ -710,9 +742,10 @@ $(D rawRead) always reads in binary mode on Windows.
  */
     T[] rawRead(T)(T[] buffer)
     {
-        import std.exception : enforce, errnoEnforce;
+        import std.exception : Exception, errnoEnforce;
 
-        enforce(buffer.length, "rawRead must take a non-empty buffer");
+        if (!buffer.length)
+            throw new Exception("rawRead must take a non-empty buffer");
         version(Windows)
         {
             immutable fd = ._fileno(_p.handle);
@@ -728,10 +761,15 @@ $(D rawRead) always reads in binary mode on Windows.
                 scope(exit) __fhnd_info[fd] = info;
             }
         }
-        immutable result =
+        immutable freadResult =
             fread(buffer.ptr, T.sizeof, buffer.length, _p.handle);
-        errnoEnforce(!error);
-        return result ? buffer[0 .. result] : null;
+        assert (freadResult <= buffer.length); // fread return guarantee
+        if (freadResult != buffer.length) // error or eof
+        {
+            errnoEnforce(!error);
+            return buffer[0 .. freadResult];
+        }
+        return buffer;
     }
 
     unittest
@@ -1410,7 +1448,14 @@ for every line.
         static if (is(C == char))
         {
             enforce(_p && _p.handle, "Attempt to read from an unopened file.");
-            return readlnImpl(_p.handle, buf, terminator);
+            if (_p.orientation == Orientation.unknown)
+            {
+                import core.stdc.wchar_ : fwide;
+                auto w = fwide(_p.handle, 0);
+                if (w < 0) _p.orientation = Orientation.narrow;
+                else if (w > 0) _p.orientation = Orientation.wide;
+            }
+            return readlnImpl(_p.handle, buf, terminator, _p.orientation);
         }
         else
         {
@@ -1509,9 +1554,11 @@ for every line.
     }
 
 /**
- Returns a temporary file by calling $(WEB
- cplusplus.com/reference/clibrary/cstdio/_tmpfile.html, _tmpfile).
- Note that the created file has no $(LREF name).*/
+ Returns a temporary file by calling
+ $(WEB  cplusplus.com/reference/clibrary/cstdio/_tmpfile.html, _tmpfile).
+
+ $(RED Warning: The $(LREF File) returned has an empty $(LREF name)).
+  */
     static File tmpfile() @safe
     {
         import std.exception : errnoEnforce;
@@ -1519,6 +1566,185 @@ for every line.
         return File(errnoEnforce(.tmpfile(),
                 "Could not create temporary file with tmpfile()"),
             null);
+    }
+
+/**
+Creates a file with a randomly generated name and returns an open File to it.
+
+There is nothing special about the file created other than the fact that its
+name is randomly generated, and it defaults to being in the temp directory on
+the system. It will only be deleted if explicitly deleted or if it's in the
+temp directory, and the temp directory is cleared out (as happens on system
+startup or shutdown on some systems).
+
+The file is created with R/W permissions and opened with $(D "w+b"). On POSIX
+systems, the permissions are restricted to the current user, though the
+effective permissions are modified by the process' umask in the usual way.
+
+Params:
+    prefix = Prefix for the generated file name.
+    suffix = Suffix for the generated file name (which also provides a way to
+             give the file an extension).
+    dir    = Directory of the temporary file. Defaults to the result of
+             $(XREF file, tempDir).
+
+Throws:
+    $(D Exception) if the file could not be created.
+
+See_Also:
+    $(LREF tmpfile)
+  */
+    static File scratchFile(const(char)[] prefix, const(char)[] suffix, const(char)[] dir)
+    {
+        import std.exception : ErrnoException;
+        import std.file : isSymlink;
+        import std.path : absolutePath, baseName, buildPath, dirName;
+
+        static string genTempName(const(char)[] prefix, const(char)[] suffix, const(char)[] dir)
+        {
+            import std.ascii : digits, letters;
+            import std.random : rndGen;
+            import std.range : chain;
+            import std.string : representation;
+            auto name = (char[]).init ~ prefix ~ "012345678901234" ~ suffix;
+
+            // Replace the 012345678901234 with random characters
+            rndGen.popFront();
+            auto chars = chain(letters.representation, digits.representation);
+            foreach (ref c; name[prefix.length .. $ - suffix.length])
+            {
+                c = chars[rndGen.front % chars.length];
+                rndGen.popFront();
+            }
+
+            return buildPath(dir, name);
+        }
+
+        // Once should be enough given the randomness, but we'll give it three
+        // times to be safe.
+        enum limit = 3;
+        for (int i = 0; true; ++i)
+        {
+            auto filename = genTempName(prefix, suffix, dir);
+
+            // So that we can test the case where the file already exists.
+            version (unittest)
+            {
+                if (i == 0)
+                {
+                    import std.file;
+                    std.file.write(filename, "nothing");
+                }
+            }
+
+            // O_EXCL does not support symbolic links.
+            if (dirName(filename).isSymlink)
+                filename = buildPath(absolutePath(dirName(filename), baseName(filename)));
+
+            import std.internal.cstring : tempCString;
+            version (Posix)
+            {
+                import core.sys.posix.sys.stat, core.sys.posix.fcntl;
+                auto fd = open(tempCString(filename), O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+            }
+            else version (Windows)
+            {
+                version (DIGITAL_MARS_STDIO)
+                {
+                    enum openFlags = O_RDWR | O_CREAT | O_EXCL;
+                    enum permissions = S_IREAD | S_IWRITE;
+                }
+                else version (MICROSOFT_STDIO)
+                {
+                    enum openFlags = _O_RDWR | _O_CREAT | _O_EXCL;
+                    enum permissions = _S_IREAD | _S_IWRITE;
+                }
+                auto fd = _wsopen(tempCString!wchar(filename), openFlags, _SH_DENYNO, permissions);
+            }
+            else static assert("Unsupported OS");
+
+            if (fd == -1)
+            {
+                import std.string: format;
+                version (unittest)
+                {
+                    import std.file;
+                    if (i == 0 && filename.exists)
+                    {
+                        std.file.remove(filename);
+                        import core.stdc.errno : errno, EEXIST;
+                        assert(errno == EEXIST, format("Error code: %s", errno));
+                    }
+                }
+                if (i == limit - 1)
+                {
+                    auto msg = format("Failed to create temporary file after %s attempts. Last file name tried [%s].",
+                                      limit, filename);
+                    throw new ErrnoException(msg);
+                }
+                continue;
+            }
+
+            File retval;
+            retval.fdopen(fd, "w+b", filename);
+            return retval;
+        }
+
+        assert(0);
+    }
+
+    /// Ditto
+    static File scratchFile(string prefix = null, string suffix = null)
+    {
+        import std.file : tempDir;
+        return File.scratchFile(prefix, suffix, std.file.tempDir());
+    }
+
+    unittest
+    {
+        import std.algorithm, std.conv, std.file, std.path, std.process;
+
+        {
+            string name;
+            scope(exit) if(name.exists) std.file.remove(name);
+
+            {
+                auto file = File.scratchFile();
+                name = file.name;
+                assert(!name.empty);
+                assert(buildNormalizedPath(name.dirName) == buildNormalizedPath(tempDir()));
+                assert(!name.baseName.empty);
+                assert(name.exists);
+                assert(name.isFile);
+                file.write("hello world");
+            }
+
+            assert(name.exists);
+            assert(name.isFile);
+            assert(readText(name) == "hello world");
+        }
+
+        auto dir = buildPath(tempDir(), "test_sub_dir_" ~ to!string(thisProcessID));
+        mkdir(dir);
+        scope(exit) if(dir.exists) rmdirRecurse(dir);
+        string name;
+        {
+            auto file = File.scratchFile("foobar", ".baz", dir);
+            name = file.name;
+            assert(!name.empty);
+            assert(name.dirName == dir);
+            assert(buildNormalizedPath(name.dirName) == buildNormalizedPath(dir));
+            assert(!name.baseName.empty);
+            assert(name.baseName.startsWith("foobar"));
+            assert(name.extension == ".baz");
+            assert(name.length > "foobar".length + ".baz".length);
+            assert(name.exists);
+            assert(name.isFile);
+            file.write("D for the win!");
+        }
+        assert(name.exists);
+        assert(name.isFile);
+        assert(readText(name) == "D for the win!");
     }
 
 /**
@@ -1589,13 +1815,12 @@ Allows to directly use range operations on lines of a file.
     private:
         import std.typecons;
 
-        /* Ref-counting stops the source range's ByLineImpl
+        /* Ref-counting stops the source range's Impl
          * from getting out of sync after the range is copied, e.g.
          * when accessing range.front, then using std.range.take,
          * then accessing range.front again. */
-        alias Impl = RefCounted!(ByLineImpl!(Char, Terminator),
-            RefCountedAutoInitialize.no);
-        Impl impl;
+        alias PImpl = RefCounted!(Impl, RefCountedAutoInitialize.no);
+        PImpl impl;
 
         static if (isScalarType!Terminator)
             enum defTerm = '\n';
@@ -1606,7 +1831,7 @@ Allows to directly use range operations on lines of a file.
         this(File f, KeepTerminator kt = KeepTerminator.no,
                 Terminator terminator = defTerm)
         {
-            impl = Impl(f, kt, terminator);
+            impl = PImpl(f, kt, terminator);
         }
 
         @property bool empty()
@@ -1623,78 +1848,67 @@ Allows to directly use range operations on lines of a file.
         {
             impl.refCountedPayload.popFront();
         }
-    }
 
-    private struct ByLineImpl(Char, Terminator)
-    {
     private:
-        File file;
-        Char[] line;
-        Terminator terminator;
-        KeepTerminator keepTerminator;
-
-    public:
-        this(File f, KeepTerminator kt, Terminator terminator)
+        struct Impl
         {
-            file = f;
-            this.terminator = terminator;
-            keepTerminator = kt;
-            popFront();
-        }
+        private:
+            File file;
+            Char[] line;
+            Char[] buffer;
+            Terminator terminator;
+            KeepTerminator keepTerminator;
 
-        // Range primitive implementations.
-        @property bool empty()
-        {
-            if (line !is null) return false;
-            if (!file.isOpen) return true;
-
-            // First read ever, must make sure stream is not empty. We
-            // do so by reading a character and putting it back. Doing
-            // so is guaranteed to work on all files opened in all
-            // buffering modes.
-            auto fp = file.getFP();
-            auto c = fgetc(fp);
-            if (c == -1)
+        public:
+            this(File f, KeepTerminator kt, Terminator terminator)
             {
-                file.detach();
-                return true;
+                file = f;
+                this.terminator = terminator;
+                keepTerminator = kt;
+                popFront();
             }
-            ungetc(c, fp) == c
-                || assert(false, "Bug in cstdlib implementation");
-            return false;
-        }
 
-        @property Char[] front()
-        {
-            return line;
-        }
-
-        void popFront()
-        {
-            import std.algorithm : endsWith;
-
-            assert(file.isOpen);
-            assumeSafeAppend(line);
-            file.readln(line, terminator);
-            if (line.empty)
+            // Range primitive implementations.
+            @property bool empty()
             {
-                file.detach();
-                line = null;
+                return line is null;
             }
-            else if (keepTerminator == KeepTerminator.no
-                    && std.algorithm.endsWith(line, terminator))
+
+            @property Char[] front()
             {
-                static if (isScalarType!Terminator)
-                    enum tlen = 1;
-                else static if (isArray!Terminator)
+                return line;
+            }
+
+            void popFront()
+            {
+                import std.algorithm : endsWith;
+                assert(file.isOpen);
+                line = buffer;
+                file.readln(line, terminator);
+                if (line.length > buffer.length)
                 {
-                    static assert(
-                        is(Unqual!(ElementEncodingType!Terminator) == Char));
-                    const tlen = terminator.length;
+                    buffer = line;
                 }
-                else
-                    static assert(false);
-                line = line.ptr[0 .. line.length - tlen];
+                if (line.empty)
+                {
+                    file.detach();
+                    line = null;
+                }
+                else if (keepTerminator == KeepTerminator.no
+                        && std.algorithm.endsWith(line, terminator))
+                {
+                    static if (isScalarType!Terminator)
+                        enum tlen = 1;
+                    else static if (isArray!Terminator)
+                    {
+                        static assert(
+                            is(Unqual!(ElementEncodingType!Terminator) == Char));
+                        const tlen = terminator.length;
+                    }
+                    else
+                        static assert(false);
+                    line = line.ptr[0 .. line.length - tlen];
+                }
             }
         }
     }
@@ -1775,6 +1989,22 @@ the contents may well have changed).
         return ByLine!(Char, Terminator)(this, keepTerminator, terminator);
     }
 
+    unittest
+    {
+        auto deleteme = testFilename();
+        std.file.write(deleteme, "hi");
+        scope(success) std.file.remove(deleteme);
+
+        import std.typetuple;
+        foreach (T; TypeTuple!(char, wchar, dchar))
+        {
+            auto blc = File(deleteme).byLine!(T, T);
+            assert(blc.front == "hi");
+            // check front is cached
+            assert(blc.front is blc.front);
+        }
+    }
+
     private struct ByLineCopy(Char, Terminator)
     {
     private:
@@ -1812,14 +2042,14 @@ the contents may well have changed).
 
     private struct ByLineCopyImpl(Char, Terminator)
     {
-        ByLineImpl!(Unqual!Char, Terminator) impl;
+        ByLine!(Unqual!Char, Terminator).Impl impl;
         bool gotFront;
         Char[] line;
 
     public:
         this(File f, KeepTerminator kt, Terminator terminator)
         {
-            impl = ByLineImpl!(Unqual!Char, Terminator)(f, kt, terminator);
+            impl = ByLine!(Unqual!Char, Terminator).Impl(f, kt, terminator);
         }
 
         @property bool empty()
@@ -2193,6 +2423,20 @@ import std.algorithm, std.stdio;
 void main()
 {
     stdin.byChunk(1024 * 1024).copy(stdout.lockingTextWriter());
+}
+---
+
+$(XREF algorithm, joiner) can be used to join chunks together into a single
+range lazily.
+Example:
+---
+import std.algorithm, std.stdio;
+void main()
+{
+    //Range of ranges
+    static assert(is(typeof(stdin.byChunk(4096).front) == ubyte[]));
+    //Range of elements
+    static assert(is(typeof(stdin.byChunk(4096).joiner.front) == ubyte));
 }
 ---
 
@@ -2903,7 +3147,7 @@ void writeln(T...)(T args)
     {
         import std.exception : enforce;
 
-        enforce(fputc('\n', .stdout._p.handle) == '\n');
+        enforce(fputc('\n', .trustedStdout._p.handle) == '\n');
     }
     else static if (T.length == 1 &&
                     is(typeof(args[0]) : const(char)[]) &&
@@ -2933,7 +3177,7 @@ void writeln(T...)(T args)
     }
 }
 
-unittest
+@safe unittest
 {
     // Just make sure the call compiles
     if (false) writeln();
@@ -3863,7 +4107,7 @@ unittest
 
 // Private implementation of readln
 version (DIGITAL_MARS_STDIO)
-private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
+private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator, File.Orientation /*ignored*/)
 {
     import core.memory;
     import core.stdc.string : memcpy;
@@ -4008,7 +4252,7 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
 }
 
 version (MICROSOFT_STDIO)
-private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
+private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator, File.Orientation /*ignored*/)
 {
     import core.memory;
     import std.array : appender, uninitializedArray;
@@ -4046,15 +4290,15 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
     return buf.length;
 }
 
-version (GCC_IO)
-private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
+version (HAS_GETDELIM)
+private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator, File.Orientation orientation)
 {
     import core.memory;
     import core.stdc.stdlib : free;
     import core.stdc.wchar_ : fwide;
     import std.utf : encode;
 
-    if (fwide(fps, 0) > 0)
+    if (orientation == File.Orientation.wide)
     {
         /* Stream is in wide characters.
          * Read them and convert to chars.
@@ -4113,10 +4357,20 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
         }
     }
 
-    char *lineptr = null;
-    size_t n = 0;
+    static char *lineptr = null;
+    static size_t n = 0;
+    scope(exit)
+    {
+        if (n > 128 * 1024)
+        {
+            // Bound memory used by readln
+            free(lineptr);
+            lineptr = null;
+            n = 0;
+        }
+    }
+
     auto s = getdelim(&lineptr, &n, terminator, fps);
-    scope(exit) free(lineptr);
     if (s < 0)
     {
         if (ferror(fps))
@@ -4124,10 +4378,9 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
         buf.length = 0;                // end of file
         return 0;
     }
-    buf = buf.ptr[0 .. GC.sizeOf(buf.ptr)];
-    if (s <= buf.length)
+    if (s <= buf.length || s <= GC.sizeOf(buf.ptr))
     {
-        buf.length = s;
+        buf = buf.ptr[0 .. s];
         buf[] = lineptr[0 .. s];
     }
     else
@@ -4137,8 +4390,8 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
     return s;
 }
 
-version (GENERIC_IO)
-private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
+version (NO_GETDELIM)
+private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator, File.Orientation orientation)
 {
     import core.stdc.wchar_ : fwide;
     import std.utf : encode;
@@ -4146,7 +4399,7 @@ private size_t readlnImpl(FILE* fps, ref char[] buf, dchar terminator = '\n')
     FLOCK(fps);
     scope(exit) FUNLOCK(fps);
     auto fp = cast(_iobuf*)fps;
-    if (fwide(fps, 0) > 0)
+    if (orientation == File.Orientation.wide)
     {
         /* Stream is in wide characters.
          * Read them and convert to chars.

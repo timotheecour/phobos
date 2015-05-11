@@ -1399,8 +1399,8 @@ private:
     private:
         final void switchContext() nothrow
         {
-            mutex.unlock();
-            scope(exit) mutex.lock();
+            mutex_nothrow.unlock_nothrow();
+            scope(exit) mutex_nothrow.lock_nothrow();
             yield();
         }
 
@@ -1792,10 +1792,8 @@ private
             }
         }
 
-
-        /*
-         *
-         */
+        ///
+        deprecated("isClosed can't be used with a const MessageBox")
         final @property bool isClosed() const
         {
             synchronized( m_lock )
@@ -1804,6 +1802,14 @@ private
             }
         }
 
+        ///
+        final @property bool isClosed()
+        {
+            synchronized( m_lock )
+            {
+                return m_closed;
+            }
+        }
 
         /*
          * Sets a limit on the maximum number of user messages allowed in the
@@ -1938,11 +1944,12 @@ private
                 assert( msg.convertsTo!(Tid) );
                 auto tid = msg.get!(Tid);
 
-                if( bool* depends = (tid in thisInfo.links) )
+                if( bool* pDepends = (tid in thisInfo.links) )
                 {
+                    auto depends = *pDepends;
                     thisInfo.links.remove( tid );
                     // Give the owner relationship precedence.
-                    if( *depends && tid != thisInfo.owner )
+                    if( depends && tid != thisInfo.owner )
                     {
                         auto e = new LinkTerminated( tid );
                         auto m = Message( MsgType.standard, e );
@@ -2502,19 +2509,15 @@ version( unittest )
 // initOnce
 //////////////////////////////////////////////////////////////////////////////
 
-private template initOnceLock()
+private @property Mutex initOnceLock()
 {
     __gshared Mutex lock;
-
-    shared static this()
-    {
-        lock = new Mutex;
-    }
-
-    @property Mutex initOnceLock()
-    {
-        return lock;
-    }
+    if (auto mtx = atomicLoad!(MemoryOrder.acq)(*cast(shared)&lock))
+        return mtx;
+    auto mtx = new Mutex;
+    if (cas(cast(shared)&lock, cast(shared)null, cast(shared)mtx))
+        return mtx;
+    return atomicLoad!(MemoryOrder.acq)(*cast(shared)&lock);
 }
 
 /**

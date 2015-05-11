@@ -44,7 +44,7 @@ fLogger.log(LogLevel.trace, 5 < 6, "Logging to the fileLogger"," with its defaul
 fLogger.fatal("Logging to the fileLogger with its warning LogLevel");
 -------------
 Additionally, this example shows how a new $(D FileLogger) is created.
-Indivitual $(D Logger) and the global log functions share commonly named
+Individual $(D Logger) and the global log functions share commonly named
 functions to log data.
 
 The names of the functions are as follows:
@@ -106,8 +106,8 @@ explicit $(D LogLevel) and conditional logging functions and methods.
 
 $(H4 Thread Local Redirection)
 Calls to the free standing log functions are not directly forwarded to the
-global $(D Logger) $(D sharedLog). Actually, a thread local $(D Logger) of 
-type $(D StdForwardLogger) process the log call and then, by default, forward 
+global $(D Logger) $(D sharedLog). Actually, a thread local $(D Logger) of
+type $(D StdForwardLogger) process the log call and then, by default, forward
 the created $(D Logger.LogEntry) to the $(D sharedLog) $(D Logger).
 The thread local $(D Logger) is accessable by the $(D stdThreadLocalLog)
 property. This property allows to assign user defined $(D Logger). The default
@@ -142,7 +142,7 @@ To gain more precise control over the logging process, additionally to
 overwriting the $(D writeLogMsg) method the methods $(D beginLogMsg),
 $(D logMsgPart) and $(D finishLogMsg) can be overwritten.
 
-$(H3 Compile Time Disabeling of $(D Logger))
+$(H3 Compile Time Disabling of $(D Logger))
 In order to disable logging at compile time, pass $(D StdLoggerDisableLogging) as a
 version argument to the $(D D) compiler when compiling your program code.
 This will disable all logging functionality.

@@ -34,11 +34,22 @@
  * {
  *     auto text = "Joe,Carpenter,300000\nFred,Blacksmith,400000\r\n";
  *
- *     foreach(record; csvReader!(Tuple!(string,string,int))(text))
+ *     foreach(record; csvReader!(Tuple!(string, string, int))(text))
  *     {
  *         writefln("%s works as a %s and earns $%d per year",
  *                  record[0], record[1], record[2]);
  *     }
+ *
+ *     // To read the same string from the file "filename.csv":
+ *
+ *     auto file = File("filename.csv", "r");
+ *     foreach(record;
+ *         file.byLine.joiner("\n").csvReader!(Tuple!(string, string, int)))
+ *     {
+ *         writefln("%s works as a %s and earns $%d per year",
+ *                  record[0], record[1], record[2]);
+ *     }
+ }
  * }
  * -------
  *
@@ -510,6 +521,8 @@ auto csvReader(Contents = string,
 // Test structure conversion interface with unicode.
 @safe pure unittest
 {
+    import std.math : abs;
+
     wstring str = "\U00010143Hello,65,63.63\nWorld,123,3673.562"w;
     struct Layout
     {
@@ -533,7 +546,7 @@ auto csvReader(Contents = string,
     {
         assert(ans[count].name == record.name);
         assert(ans[count].value == record.value);
-        assert(ans[count].other == record.other);
+        assert(abs(ans[count].other - record.other) < 0.00001);
         count++;
     }
     assert(count == ans.length);
@@ -556,6 +569,8 @@ auto csvReader(Contents = string,
 // Test struct & header interface and same unicode
 unittest
 {
+    import std.math : abs;
+
     string str = "a,b,c\nHello,65,63.63\n➊➋➂❹,123,3673.562";
     struct Layout
     {
@@ -579,7 +594,7 @@ unittest
     {
         assert(ans[count].name == record.name);
         assert(ans[count].value == record.value);
-        assert(ans[count].other == record.other);
+        assert(abs(ans[count].other - record.other) < 0.00001);
         count++;
     }
     assert(count == ans.length);
@@ -745,7 +760,7 @@ unittest
 
     foreach(record; csvReader(ir, cast(string[])null))
         foreach(cell; record) {}
-    foreach(record; csvReader!(Tuple!(string,string,int))
+    foreach(record; csvReader!(Tuple!(string, string, int))
             (ir,cast(string[])null)) {}
     foreach(record; csvReader!(string[string])
             (ir,cast(string[])null)) {}
