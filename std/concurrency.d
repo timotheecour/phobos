@@ -75,13 +75,13 @@ private
     import core.sync.mutex;
     import core.sync.condition;
     import std.algorithm;
-    import std.datetime;
     import std.exception;
     import std.range;
     import std.string;
     import std.traits;
     import std.typecons;
     import std.typetuple;
+    import std.concurrencybase;
 
     template hasLocalAliasing(T...)
     {
@@ -670,7 +670,7 @@ in
 {
     assert(thisInfo.ident.mbox !is null,
            "Cannot receive a message until a thread was spawned "
-           "or thisTid was passed to a running thread.");
+           ~ "or thisTid was passed to a running thread.");
 }
 body
 {
@@ -754,7 +754,7 @@ in
 {
     assert(thisInfo.ident.mbox !is null,
            "Cannot receive a message until a thread was spawned "
-           "or thisTid was passed to a running thread.");
+           ~ "or thisTid was passed to a running thread.");
 }
 body
 {
@@ -825,7 +825,7 @@ in
 {
     assert(thisInfo.ident.mbox !is null,
            "Cannot receive a message until a thread was spawned "
-           "or thisTid was passed to a running thread.");
+           ~ "or thisTid was passed to a running thread.");
 }
 body
 {
@@ -956,7 +956,7 @@ private
 }
 
 
-shared static this()
+extern (C) void std_concurrency_static_this()
 {
     registryLock = new Mutex;
 }
@@ -1373,11 +1373,12 @@ private:
 
         override bool wait( Duration period ) nothrow
         {
+            import core.time;
             scope(exit) notified = false;
 
-            for( auto limit = Clock.currSystemTick + period;
+            for( auto limit = TickDuration.currSystemTick + period;
                  !notified && !period.isNegative;
-                 period = limit - Clock.currSystemTick )
+                 period = limit - TickDuration.currSystemTick )
             {
                 yield();
             }
@@ -2047,7 +2048,8 @@ private
 
             static if( timedWait )
             {
-                auto limit = Clock.currSystemTick + period;
+                import core.time;
+                auto limit = TickDuration.currSystemTick + period;
             }
 
             while( true )
@@ -2095,7 +2097,7 @@ private
                     {
                         static if( timedWait )
                         {
-                            period = limit - Clock.currSystemTick;
+                            period = limit - TickDuration.currSystemTick;
                         }
                         continue;
                     }

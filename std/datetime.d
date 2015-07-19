@@ -297,7 +297,7 @@ immutable string[] timeStrings = ["hnsecs", "usecs", "msecs", "seconds", "minute
     Either can be caught without concern about which
     module it came from.
   +/
-alias TimeException DateTimeException;
+alias DateTimeException = TimeException;
 
 /++
     Effectively a namespace to make it clear that the methods it contains are
@@ -310,83 +310,173 @@ public:
     /++
         Returns the current time in the given time zone.
 
+        Params:
+            clockType = The $(CXREF time, ClockType) indicates which system
+                        clock to use to get the current time. Very few programs
+                        need to use anything other than the default.
+            tz = The time zone for the SysTime that's returned.
+
         Throws:
-            $(XREF exception, ErrnoException) (on Posix) or $(XREF exception, Exception) (on Windows)
-            if it fails to get the time of day.
+            $(LREF DateTimeException) if it fails to get the time.
       +/
-    static SysTime currTime(immutable TimeZone tz = LocalTime()) @safe
+    static SysTime currTime(ClockType clockType = ClockType.normal)(immutable TimeZone tz = LocalTime()) @safe
     {
-        return SysTime(currStdTime, tz);
+        return SysTime(currStdTime!clockType, tz);
     }
 
     unittest
     {
+        import std.format : format;
+        assert(currTime().timezone is LocalTime());
         assert(currTime(UTC()).timezone is UTC());
 
-        //I have no idea why, but for some reason, Windows/Wine likes to get
-        //time_t wrong when getting it with core.stdc.time.time. On one box
-        //I have (which has its local time set to UTC), it always gives time_t
-        //in the real local time (America/Los_Angeles), and after the most recent
-        //DST switch, every Windows box that I've tried it in is reporting
-        //time_t as being 1 hour off of where it's supposed to be. So, I really
-        //don't know what the deal is, but given what I'm seeing, I don't trust
-        //core.stdc.time.time on Windows, so I'm just going to disable this test
-        //on Windows.
+        // core.stdc.time.time does not always work correctly on Windows systems.
+        // In particular, sometimes it applies the local DST to time_t, even
+        // though time_t is in UTC. I'm fairly certain that it's a bug in dmc's
+        // implementation, but it needs to be investigated. Regardless, the
+        // result is that for now, we can't run this test on Windows.
         version(Posix)
         {
+            static import std.math;
             immutable unixTimeD = currTime().toUnixTime();
             immutable unixTimeC = core.stdc.time.time(null);
-            immutable diff = unixTimeC - unixTimeD;
+            assert(std.math.abs(unixTimeC - unixTimeD) <= 2);
+        }
 
-            assert(diff >= -2);
-            assert(diff <= 2);
+        auto norm1 = Clock.currTime;
+        auto norm2 = Clock.currTime(UTC());
+        assert(norm1 <= norm2, format("%s %s", norm1, norm2));
+        assert(abs(norm1 - norm2) <= seconds(2));
+
+        import std.typetuple;
+        foreach(ct; TypeTuple!(ClockType.coarse, ClockType.precise, ClockType.second))
+        {
+            scope(failure) writefln("ClockType.%s", ct);
+            auto value1 = Clock.currTime!ct;
+            auto value2 = Clock.currTime!ct(UTC());
+            assert(value1 <= value2, format("%s %s", value1, value2));
+            assert(abs(value1 - value2) <= seconds(2));
         }
     }
+
 
     /++
         Returns the number of hnsecs since midnight, January 1st, 1 A.D. for the
         current time.
 
+        Params:
+            clockType = The $(CXREF time, ClockType) indicates which system
+                        clock to use to get the current time. Very few programs
+                        need to use anything other than the default.
+
         Throws:
             $(LREF DateTimeException) if it fails to get the time.
       +/
-    static @property long currStdTime() @trusted
+    static @property long currStdTime(ClockType clockType = ClockType.normal)() @trusted
     {
+        static if(clockType != ClockType.coarse &&
+                  clockType != ClockType.normal &&
+                  clockType != ClockType.precise &&
+                  clockType != ClockType.second)
+        {
+            import std.format : format;
+            static assert(0, format("ClockType.%s is not supported by Clock.currTime or Clock.currStdTime", clockType));
+        }
+
         version(Windows)
         {
             FILETIME fileTime;
             GetSystemTimeAsFileTime(&fileTime);
-
-            return FILETIMEToStdTime(&fileTime);
+            immutable result = FILETIMEToStdTime(&fileTime);
+            static if(clockType == ClockType.second)
+            {
+                // This should probably just use core.stdc.time.time, but dmc's
+                // time function seems to apply DST to time_t, which is
+                // incorrect and thus only works with dmc's other C functions.
+                return convert!("seconds", "hnsecs")(convert!("hnsecs", "seconds")(result));
+            }
+            else
+                return result;
         }
         else version(Posix)
         {
-            enum hnsecsToUnixEpoch = 621_355_968_000_000_000L;
+            enum hnsecsToUnixEpoch = unixTimeToStdTime(0);
 
-            static if(is(typeof(clock_gettime)))
+            version(OSX)
             {
+                static if(clockType == ClockType.second)
+                    return unixTimeToStdTime(core.stdc.time.time(null));
+                else
+                {
+                    timeval tv;
+                    if(gettimeofday(&tv, null) != 0)
+                        throw new TimeException("Call to gettimeofday() failed");
+                    return convert!("seconds", "hnsecs")(tv.tv_sec) +
+                           convert!("usecs", "hnsecs")(tv.tv_usec) +
+                           hnsecsToUnixEpoch;
+                }
+            }
+            else version(linux)
+            {
+                static if(clockType == ClockType.second)
+                    return unixTimeToStdTime(core.stdc.time.time(null));
+                else
+                {
+                    import core.sys.linux.time;
+                    static if(clockType == ClockType.coarse)       alias clockArg = CLOCK_REALTIME_COARSE;
+                    else static if(clockType == ClockType.normal)  alias clockArg = CLOCK_REALTIME;
+                    else static if(clockType == ClockType.precise) alias clockArg = CLOCK_REALTIME;
+                    else static assert(0, "Previous static if is wrong.");
+                    timespec ts;
+                    if(clock_gettime(clockArg, &ts) != 0)
+                        throw new TimeException("Call to clock_gettime() failed");
+                    return convert!("seconds", "hnsecs")(ts.tv_sec) +
+                           ts.tv_nsec / 100 +
+                           hnsecsToUnixEpoch;
+                }
+            }
+            else version(FreeBSD)
+            {
+                import core.sys.freebsd.time;
+                static if(clockType == ClockType.coarse)       alias clockArg = CLOCK_REALTIME_FAST;
+                else static if(clockType == ClockType.normal)  alias clockArg = CLOCK_REALTIME;
+                else static if(clockType == ClockType.precise) alias clockArg = CLOCK_REALTIME_PRECISE;
+                else static if(clockType == ClockType.second)  alias clockArg = CLOCK_SECOND;
+                else static assert(0, "Previous static if is wrong.");
                 timespec ts;
-
-                if(clock_gettime(CLOCK_REALTIME, &ts) != 0)
-                    throw new TimeException("Failed in clock_gettime().");
-
+                if(clock_gettime(clockArg, &ts) != 0)
+                    throw new TimeException("Call to clock_gettime() failed");
                 return convert!("seconds", "hnsecs")(ts.tv_sec) +
                        ts.tv_nsec / 100 +
                        hnsecsToUnixEpoch;
             }
-            else
-            {
-                timeval tv;
+            else static assert(0, "Unsupported OS");
+        }
+        else static assert(0, "Unsupported OS");
+    }
 
-                if(gettimeofday(&tv, null) != 0)
-                    throw new TimeException("Failed in gettimeofday().");
+    unittest
+    {
+        import std.math : abs;
+        import std.format : format;
+        enum limit = convert!("seconds", "hnsecs")(2);
 
-                return convert!("seconds", "hnsecs")(tv.tv_sec) +
-                       convert!("usecs", "hnsecs")(tv.tv_usec) +
-                       hnsecsToUnixEpoch;
-            }
+        auto norm1 = Clock.currStdTime;
+        auto norm2 = Clock.currStdTime;
+        assert(norm1 <= norm2, format("%s %s", norm1, norm2));
+        assert(abs(norm1 - norm2) <= limit);
+
+        import std.typetuple;
+        foreach(ct; TypeTuple!(ClockType.coarse, ClockType.precise, ClockType.second))
+        {
+            scope(failure) writefln("ClockType.%s", ct);
+            auto value1 = Clock.currStdTime!ct;
+            auto value2 = Clock.currStdTime!ct;
+            assert(value1 <= value2, format("%s %s", value1, value2));
+            assert(abs(value1 - value2) <= limit);
         }
     }
+
 
     /++
         The current system tick. The number of ticks per second varies from
@@ -26413,7 +26503,7 @@ auto tz = TimeZone.getTimeZone("America/Los_Angeles");
     //reads a time zone file.
     unittest
     {
-        import std.path : buildPath;
+        import std.path : chainPath;
         import std.file : exists, isFile;
         import std.conv : to;
         import std.format : format;
@@ -26492,7 +26582,7 @@ auto tz = TimeZone.getTimeZone("America/Los_Angeles");
                 //be there, but since PosixTimeZone _does_ use leap seconds if
                 //the time zone file does, we'll test that functionality if the
                 //appropriate files exist.
-                if(buildPath(PosixTimeZone.defaultTZDatabaseDir, "right", tzName).exists)
+                if (chainPath(PosixTimeZone.defaultTZDatabaseDir, "right", tzName).exists)
                 {
                     auto leapTZ = PosixTimeZone.getTimeZone("right/" ~ tzName);
 
@@ -26533,7 +26623,6 @@ auto tz = TimeZone.getTimeZone("America/Los_Angeles");
             version(FreeBSD)      enum utcZone = "Etc/UTC";
             else version(linux)   enum utcZone = "UTC";
             else version(OSX)     enum utcZone = "UTC";
-            else version(Android) enum utcZone = "UTC";
             else static assert(0, "The location of the UTC timezone file on this Posix platform must be set.");
 
             auto tzs = [testTZ("America/Los_Angeles", "PST", "PDT", dur!"hours"(-8), dur!"hours"(1)),
@@ -26806,7 +26895,7 @@ public:
       +/
     static immutable(LocalTime) opCall() @trusted pure nothrow
     {
-        alias @safe pure nothrow immutable(LocalTime) function() FuncType;
+        alias FuncType = @safe pure nothrow immutable(LocalTime) function();
         return (cast(FuncType)&singleton)();
     }
 
@@ -27334,31 +27423,15 @@ private:
     }
 
 
-    static immutable LocalTime _localTime = new immutable(LocalTime)();
-    // Use low-lock singleton pattern with _tzsetWasCalled (see http://dconf.org/talks/simcha.html)
-    static bool _lowLock;
-    static shared bool _tzsetWasCalled;
-
-
     // This is done so that we can maintain purity in spite of doing an impure
     // operation the first time that LocalTime() is called.
     static immutable(LocalTime) singleton() @trusted
     {
-        if(!_lowLock)
-        {
-            synchronized
-            {
-                if(!_tzsetWasCalled)
-                {
-                    tzset();
-                    _tzsetWasCalled = true;
-                }
-            }
-
-            _lowLock = true;
-        }
-
-        return _localTime;
+        import std.concurrency : initOnce;
+        static instance = new immutable(LocalTime)();
+        static shared bool guard;
+        initOnce!guard({tzset(); return true;}());
+        return instance;
     }
 }
 
@@ -27906,7 +27979,7 @@ private:
 final class PosixTimeZone : TimeZone
 {
     import std.stdio : File;
-    import std.path : buildNormalizedPath, extension;
+    import std.path : extension;
     import std.file : isDir, isFile, exists, dirEntries, SpanMode, DirEntry;
     import std.string : strip, representation;
     import std.algorithm : countUntil, canFind, startsWith;
@@ -28076,13 +28149,15 @@ assert(tz.dstName == "PDT");
         import std.algorithm : sort;
         import std.range : retro;
         import std.format : format;
+        import std.path : toNormalizedPath, chainPath;
+        import std.conv : to;
 
         name = strip(name);
 
         enforce(tzDatabaseDir.exists(), new DateTimeException(format("Directory %s does not exist.", tzDatabaseDir)));
         enforce(tzDatabaseDir.isDir, new DateTimeException(format("%s is not a directory.", tzDatabaseDir)));
 
-        immutable file = buildNormalizedPath(tzDatabaseDir, name);
+        const file = toNormalizedPath(chainPath(tzDatabaseDir, name)).to!string;
 
         enforce(file.exists(), new DateTimeException(format("File %s does not exist.", file)));
         enforce(file.isFile, new DateTimeException(format("%s is not a file.", file)));
@@ -28812,7 +28887,7 @@ version(StdDdoc)
 
         version(Windows) {}
         else
-            alias void* TIME_ZONE_INFORMATION;
+            alias TIME_ZONE_INFORMATION = void*;
 
         static bool _dstInEffect(const TIME_ZONE_INFORMATION* tzInfo, long stdTime) nothrow;
         static long _utcToTZ(const TIME_ZONE_INFORMATION* tzInfo, long stdTime, bool hasDST) nothrow;
@@ -29171,28 +29246,23 @@ else version(Posix)
     void setTZEnvVar(string tzDatabaseName) @trusted nothrow
     {
         import std.internal.cstring : tempCString;
-        import std.path : buildNormalizedPath;
+        import std.path : toNormalizedPath, chainPath;
+        import core.sys.posix.stdlib : setenv;
+        import core.sys.posix.time : tzset;
 
-        try
-        {
-            immutable value = buildNormalizedPath(PosixTimeZone.defaultTZDatabaseDir, tzDatabaseName);
-            setenv("TZ", value.tempCString(), 1);
-            tzset();
-        }
-        catch(Exception e)
-            assert(0, "The impossible happened. setenv or tzset threw.");
+        auto value = toNormalizedPath(chainPath(PosixTimeZone.defaultTZDatabaseDir, tzDatabaseName));
+        setenv("TZ", value.tempCString(), 1);
+        tzset();
     }
 
 
     void clearTZEnvVar() @trusted nothrow
     {
-        try
-        {
-            unsetenv("TZ");
-            tzset();
-        }
-        catch(Exception e)
-            assert(0, "The impossible happened. unsetenv or tzset threw.");
+        import core.sys.posix.stdlib : unsetenv;
+        import core.sys.posix.time : tzset;
+
+        unsetenv("TZ");
+        tzset();
     }
 }
 
@@ -30416,8 +30486,8 @@ version(StdDdoc)
     version(Windows) {}
     else
     {
-        alias void* SYSTEMTIME;
-        alias void* FILETIME;
+        alias SYSTEMTIME = void*;
+        alias FILETIME = void*;
     }
 
     /++
@@ -30704,7 +30774,7 @@ else version(Windows)
 /++
     Type representing the DOS file date/time format.
   +/
-alias uint DosFileTime;
+alias DosFileTime = uint;
 
 /++
     Converts from DOS file date/time to $(LREF SysTime).
@@ -31098,8 +31168,8 @@ unittest
                            function(string a){return map!(b => cast(char)b)(a.representation);}))
     (){ // avoid slow optimizations for large functions @@@BUG@@@ 2396
         scope(failure) writeln(typeof(cr).stringof);
-        alias testParse822!cr test;
-        alias testBadParse822!cr testBad;
+        alias test = testParse822!cr;
+        alias testBad = testBadParse822!cr;
 
         immutable std1 = DateTime(2012, 12, 21, 13, 14, 15);
         immutable std2 = DateTime(2012, 12, 21, 13, 14, 0);
@@ -31363,7 +31433,7 @@ unittest
                            function(string a){return map!(b => cast(char)b)(a.representation);}))
     (){ // avoid slow optimizations for large functions @@@BUG@@@ 2396
         scope(failure) writeln(typeof(cr).stringof);
-        alias testParse822!cr test;
+        alias test = testParse822!cr;
         {
             auto list = ["", " ", " \r\n\t", "\t\r\n (hello world( frien(dog)) silly \r\n )  \t\t \r\n ()",
                          " \n ", "\t\n\t", " \n\t (foo) \n (bar) \r\n (baz) \n "];

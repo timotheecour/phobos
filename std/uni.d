@@ -912,7 +912,7 @@ struct MultiArray(Types...)
     }
 
 private:
-    @property auto raw_ptr(size_t n)()inout
+    @property auto raw_ptr(size_t n)()inout pure nothrow @nogc
     {
         static if(n == 0)
             return storage.ptr;
@@ -2982,7 +2982,7 @@ private:
     }
 
     CowArray!SP data;
-};
+}
 
 @system unittest
 {
@@ -5618,7 +5618,7 @@ unittest
     //@@@BUG link failure, lambdas not found by linker somehow (in case of trie2)
     // alias lo8   = assumeSize!(8, function (uint x) { return x&0xFF; });
     // alias next8 = assumeSize!(7, function (uint x) { return (x&0x7F00)>>8; });
-    alias CodepointSet Set;
+    alias Set = CodepointSet;
     auto set = Set('A','Z','a','z');
     auto trie = buildTrie!(bool, uint, 256, lo8)(set.byInterval);// simple bool array
     for(int a='a'; a<'z';a++)
@@ -6470,8 +6470,6 @@ size_t graphemeStride(C)(in C[] input, size_t index)
     assert(city[first..$] == "rhus");
 }
 
-@trusted:
-
 /++
     Reads one full grapheme cluster from an input range of dchar $(D inp).
 
@@ -6698,6 +6696,8 @@ unittest
 
     assert(cpText.walkLength == text.walkLength);
 }
+
+@trusted:
 
 /++
     $(P A structure designed to effectively pack $(CHARACTERS)
@@ -7080,7 +7080,7 @@ unittest
 
     See_Also:
         $(LREF icmp)
-        $(XREF algorithm, cmp)
+        $(XREF_PACK algorithm,comparison,cmp)
 +/
 int sicmp(S1, S2)(S1 str1, S2 str2)
     if(isForwardRange!S1 && is(Unqual!(ElementType!S1) == dchar)
@@ -7409,7 +7409,7 @@ enum UnicodeDecomposition {
          typically suitable only for fuzzy matching and internal processing.
     */
     Compatibility
-};
+}
 
 /**
     Shorthand aliases for character decomposition type, passed as a
@@ -8393,7 +8393,6 @@ unittest
     assert(toLower("\u1Fe2") == toLowerCase("\u1Fe2").byChar.array);
 }
 
-import std.stdio;
 // generic capitalizer on whole range, returns range
 private auto toCapitalizer(alias indexFnUpper, uint maxIdxUpper, alias tableFnUpper,
                            Range)(Range str)
@@ -8981,9 +8980,11 @@ unittest
     Certain alphabets like German and Greek have no 1:1
     upper-lower mapping. Use overload of toUpper which takes full string instead.
 
-    toUpper can be used as an argument to $(XREF algorithm, map) to produce an algorithm that can
-    convert a range of characters to upper case without allocating memory.
-    A string can then be produced by using $(XREF algorithm, copy) to send it to an $(XREF array, appender).
+    toUpper can be used as an argument to $(XREF_PACK algorithm,iteration,map)
+    to produce an algorithm that can convert a range of characters to upper case
+    without allocating memory.
+    A string can then be produced by using $(XREF_PACK algorithm,mutation,copy)
+    to send it to an $(XREF array, appender).
 +/
 @safe pure nothrow @nogc
 dchar toUpper(dchar c)
