@@ -418,7 +418,7 @@ Returns: The number of values inserted.
 Complexity: $(BIGOH k + m), where $(D k) is the number of elements in
 $(D r) and $(D m) is the length of $(D stuff).
 
-Examples:
+Example:
 --------------------
 auto sl = SList!string(["a", "b", "d"]);
 sl.insertAfter(sl[], "e"); // insert at the end (slowest)
@@ -430,6 +430,7 @@ assert(std.algorithm.equal(sl[], ["a", "b", "c", "d", "e"]));
 
     size_t insertAfter(Stuff)(Range r, Stuff stuff)
     {
+        initialize();
         if (!_first)
         {
             enforce(!r._head);
@@ -760,4 +761,12 @@ unittest
     auto r = s[];
     r.front = 1; //test frontAssign
     assert(r.front == 1);
+}
+
+unittest
+{
+    // issue 14920
+    SList!int s;
+    s.insertAfter(s[], 1);
+    assert(s.front == 1);
 }

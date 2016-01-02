@@ -6,34 +6,21 @@ $(COMMENT Pending changelog for 2.069. This will get copied to dlang.org and
 
 $(BUGSTITLE Library Changes,
 
-$(LI $(RELATIVE_LINK2 std-algorithm-moveEmplace, `moveEmplace` was added))
+$(LI $(RELATIVE_LINK2 json-encode-control-characters, `std.json` encodes string control characters.))
 
 )
 
 $(BUGSTITLE Library Changes,
 
-$(LI $(LNAME2 std-algorithm-moveEmplace, A combined `moveEmplace` was added.)
+$(LI $(LNAME2 json-encode-control-characters, `std.json` encodes string control characters.)
 
-    $(P $(XREF algorithm_mutation, MoveEmplace) efficiently combines $(XREF
-        algorithm_mutation, move) with $(XREF conv, emplace) thus avoids having
-        to initialize and destroy a value before moving into uninitialized data.
+    $(P Instead of throwing a $(XREF json, JSONException), $(XREF json, toJSON)
+        encodes now the control characters of a string.
     )
 
     ------
-    T* moveToHeap(T)(ref T value)
-    {
-        import core.memory : GC;
-
-        auto ptr = cast(T*)GC.malloc(T.sizeof);
-        // move value and emplace it into ptr
-        moveEmplace(value, *ptr);
-        return ptr;
-    }
+    assert(toJSON(JSONValue("foo\u007fbar") == `"foo\u007Fbar"`);
     ------
-    $(P There are also $(XREF algorithm_mutation, moveEmplaceAll)
-        and $(XREF algorithm_mutation, moveEmplaceSome) as counterparts of
-        $(XREF algorithm_mutation, moveAll) and $(XREF algorithm_mutation, moveSome).
-    )
 )
 
 )
@@ -49,3 +36,5 @@ Macros:
     STDMODREF = <a href="phobos/std_$1.html">$2</a>
     XREF = <a href="phobos/std_$1.html#$2">$2</a>
     CXREF = <a href="phobos/core_$1.html#$2">$2</a>
+
+    BOOKTABLE = <table><caption>$1</caption>$+</table>

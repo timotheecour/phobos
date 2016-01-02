@@ -138,16 +138,18 @@ SRC_STD_CONTAINER= std\container\array.d std\container\binaryheap.d \
 
 SRC_STD_4= std\uuid.d $(SRC_STD_DIGEST)
 
-SRC_STD_ALGO= std\algorithm\package.d std\algorithm\comparison.d \
-	std\algorithm\iteration.d std\algorithm\mutation.d \
-	std\algorithm\searching.d std\algorithm\setops.d \
+SRC_STD_ALGO_1=std\algorithm\package.d std\algorithm\comparison.d \
+	std\algorithm\iteration.d std\algorithm\mutation.d
+SRC_STD_ALGO_2=std\algorithm\searching.d std\algorithm\setops.d \
 	std\algorithm\sorting.d std\algorithm\internal.d
+SRC_STD_ALGO=$(SRC_STD_ALGO_1) $(SRC_STD_ALGO_2)
 
 SRC_STD_LOGGER= std\experimental\logger\core.d std\experimental\logger\filelogger.d \
 	std\experimental\logger\multilogger.d std\experimental\logger\nulllogger.d \
 	std\experimental\logger\package.d
 
-SRC_STD_5_HEAVY= $(SRC_STD_ALGO)
+SRC_STD_5a=$(SRC_STD_ALGO_1)
+SRC_STD_5b=$(SRC_STD_ALGO_2)
 
 SRC_STD_6a=std\variant.d
 SRC_STD_6b=std\syserror.d
@@ -210,6 +212,12 @@ SRC_STD_REGEX= std\regex\internal\ir.d std\regex\package.d std\regex\internal\pa
 SRC_STD_RANGE= std\range\package.d std\range\primitives.d \
 	std\range\interfaces.d
 
+SRC_STD_NDSLICE= std\experimental\ndslice\package.d \
+	std\experimental\ndslice\iteration.d \
+	std\experimental\ndslice\selection.d \
+	std\experimental\ndslice\slice.d \
+	std\experimental\ndslice\internal.d
+
 SRC_STD_NET= std\net\isemail.d std\net\curl.d
 
 SRC_STD_C= std\c\process.d std\c\stdlib.d std\c\time.d std\c\stdio.d \
@@ -264,6 +272,7 @@ SRC_TO_COMPILE_NOT_STD= \
 SRC_TO_COMPILE= $(SRC_STD_ALL) \
 	$(SRC_STD_ALGO) \
 	$(SRC_STD_RANGE) \
+	$(SRC_STD_NDSLICE) \
 	$(SRC_TO_COMPILE_NOT_STD)
 
 SRC_ZLIB= \
@@ -349,7 +358,9 @@ DOCS=	$(DOC)\object.html \
 	$(DOC)\std_digest_sha.html \
 	$(DOC)\std_digest_md.html \
 	$(DOC)\std_digest_ripemd.html \
+	$(DOC)\std_digest_hmac.html \
 	$(DOC)\std_digest_digest.html \
+	$(DOC)\std_digest_hmac.html \
 	$(DOC)\std_cstream.html \
 	$(DOC)\std_csv.html \
 	$(DOC)\std_datetime.html \
@@ -438,7 +449,8 @@ UNITTEST_OBJS= \
 		unittest3b.obj \
 		unittest3c.obj \
 		unittest4.obj \
-		unittest5.obj \
+		unittest5a.obj \
+		unittest5b.obj \
 		unittest6a.obj \
 		unittest6b.obj \
 		unittest6c.obj \
@@ -455,6 +467,7 @@ UNITTEST_OBJS= \
 unittest : $(LIB)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest1.obj $(SRC_STD_1_HEAVY)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest2.obj $(SRC_STD_RANGE)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest2.obj $(SRC_STD_NDSLICE)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest2a.obj $(SRC_STD_2a_HEAVY)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittestM.obj $(SRC_STD_math)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3.obj $(SRC_STD_3)
@@ -462,7 +475,8 @@ unittest : $(LIB)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3b.obj $(SRC_STD_3b)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest3c.obj $(SRC_STD_3c)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest4.obj $(SRC_STD_4)
-	$(DMD) $(UDFLAGS) -c -unittest -ofunittest5.obj $(SRC_STD_5_HEAVY)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest5a.obj $(SRC_STD_5a)
+	$(DMD) $(UDFLAGS) -c -unittest -ofunittest5b.obj $(SRC_STD_5b)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6a.obj $(SRC_STD_6a)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6b.obj $(SRC_STD_6b)
 	$(DMD) $(UDFLAGS) -c -unittest -ofunittest6c.obj $(SRC_STD_6c)
@@ -814,6 +828,9 @@ $(DOC)\std_digest_ripemd.html : $(STDDOC) std\digest\ripemd.d
 $(DOC)\std_digest_digest.html : $(STDDOC) std\digest\digest.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_digest_digest.html $(STDDOC) std\digest\digest.d
 
+$(DOC)\std_digest_hmac.html : $(STDDOC) std\digest\hmac.d
+	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_digest_hmac.html $(STDDOC) std\digest\hmac.d
+
 $(DOC)\std_windows_charset.html : $(STDDOC) std\windows\charset.d
 	$(DMD) -c -o- $(DDOCFLAGS) -Df$(DOC)\std_windows_charset.html $(STDDOC) std\windows\charset.d
 
@@ -884,7 +901,7 @@ zip : win32.mak win64.mak posix.mak osmodel.mak $(STDDOC) $(SRC) \
 	$(SRC_STD_C_WIN) $(SRC_STD_C_LINUX) $(SRC_STD_C_OSX) $(SRC_STD_C_FREEBSD) \
 	$(SRC_ETC) $(SRC_ETC_C) $(SRC_ZLIB) $(SRC_STD_NET) $(SRC_STD_DIGEST) $(SRC_STD_CONTAINER) \
 	$(SRC_STD_INTERNAL) $(SRC_STD_INTERNAL_DIGEST) $(SRC_STD_INTERNAL_MATH) \
-	$(SRC_STD_INTERNAL_WINDOWS) $(SRC_STD_REGEX) $(SRC_STD_RANGE) $(SRC_STD_ALGO) \
+	$(SRC_STD_INTERNAL_WINDOWS) $(SRC_STD_REGEX) $(SRC_STD_RANGE) $(SRC_STD_NDSLICE) $(SRC_STD_ALGO) \
 	$(SRC_STD_LOGGER)
 	del phobos.zip
 	zip32 -u phobos win32.mak win64.mak posix.mak osmodel.mak $(STDDOC)
@@ -908,13 +925,14 @@ zip : win32.mak win64.mak posix.mak osmodel.mak $(STDDOC) $(SRC) \
 	zip32 -u phobos $(SRC_STD_CONTAINER)
 	zip32 -u phobos $(SRC_STD_REGEX)
 	zip32 -u phobos $(SRC_STD_RANGE)
+	zip32 -u phobos $(SRC_STD_NDSLICE)
 	zip32 -u phobos $(SRC_STD_ALGO)
 
 phobos.zip : zip
 
 clean:
 	cd etc\c\zlib
-	$(MAKE) -f win$(MODEL).mak clean
+	$(MAKE) -f win64.mak MODEL=$(MODEL) clean
 	cd ..\..\..
 	del $(DOCS)
 	del $(UNITTEST_OBJS) unittest.obj unittest.exe

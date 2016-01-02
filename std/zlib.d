@@ -1,7 +1,7 @@
 // Written in the D programming language.
 
 /**
- * Compress/decompress data using the $(WEB www.zlib.net, zlib library).
+ * Compress/decompress data using the $(WEB www._zlib.net, _zlib library).
  *
  * References:
  *  $(WEB en.wikipedia.org/wiki/Zlib, Wikipedia)
@@ -64,7 +64,7 @@ class ZlibException : Exception
  * $(P Compute the Adler-32 checksum of a buffer's worth of data.)
  *
  * Params:
- *     adler = the starting checksum for the computation. Use 0
+ *     adler = the starting checksum for the computation. Use 1
  *             for a new checksum. Use the output of this function
  *             for a cumulative checksum.
  *     buf = buffer containing input data
@@ -90,12 +90,16 @@ unittest
 {
     static ubyte[] data = [1,2,3,4,5,6,7,8,9,10];
 
-    uint adler;
-
-    debug(zlib) printf("D.zlib.adler32.unittest\n");
-    adler = adler32(0u, cast(void[])data);
-    debug(zlib) printf("adler = %x\n", adler);
+    uint adler = adler32(0u, data);
     assert(adler == 0xdc0037);
+}
+
+unittest
+{
+    static string data = "test";
+
+    uint adler = adler32(1, data);
+    assert(adler == 0x045d01c1);
 }
 
 /**
@@ -141,9 +145,9 @@ unittest
  *
  * Params:
  *     srcbuf = buffer containing the data to compress
- *     level = compression level. Legal values are 1..9, with 1 being the
- *             least compression and 9 being the most. The default value
- *             is 6.
+ *     level = compression level. Legal values are -1..9, with -1 indicating
+ *             the default level (6), 0 indicating no compression, 1 being the
+ *             least compression and 9 being the most.
  *
  * Returns:
  *     the compressed data
