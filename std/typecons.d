@@ -2264,6 +2264,25 @@ Forces $(D this) to the null state.
 }
 
 /**
+Initializes $(D this) to the init state.
+ */
+    void initialize()()
+    {
+        _value = T.init;
+        _isNull = false;
+    }
+
+///
+@safe unittest
+{
+    Nullable!int ni;
+    assert(ni.isNull);
+
+    ni.initialize();
+    assert(!ni.isNull);
+}
+
+/**
 Assigns $(D value) to the internally-held state. If the assignment
 succeeds, $(D this) becomes non-null.
 
@@ -2385,6 +2404,9 @@ $(D this) must not be in the null state.
     assert(a == 18);
     a.nullify();
     assertThrown!Throwable(a += 2);
+    a.initialize();
+    assert(!a.isNull);
+    assert(a == 0);
 }
 @safe unittest
 {
