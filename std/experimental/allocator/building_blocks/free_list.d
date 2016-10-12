@@ -1,3 +1,4 @@
+///
 module std.experimental.allocator.building_blocks.free_list;
 
 import std.experimental.allocator.common;
@@ -5,7 +6,7 @@ import std.typecons : Flag, Yes, No;
 
 /**
 
-$(WEB en.wikipedia.org/wiki/Free_list, Free list allocator), stackable on top of
+$(HTTP en.wikipedia.org/wiki/Free_list, Free list allocator), stackable on top of
 another allocator. Allocation requests between $(D min) and $(D max) bytes are
 rounded up to $(D max) and served from a singly-linked list of buffers
 deallocated in the past. All other allocations are directed to $(D
@@ -30,6 +31,7 @@ struct FreeList(ParentAllocator,
     import std.conv : text;
     import std.exception : enforce;
     import std.traits : hasMember;
+    import std.typecons : Ternary;
 
     static assert(minSize != unbounded, "Use minSize = 0 for no low bound.");
     static assert(maxSize >= (void*).sizeof,
@@ -165,7 +167,7 @@ struct FreeList(ParentAllocator,
         return (cast(void*) p)[0 .. max];
     }
 
-    // statistics {
+    // statistics
     static if (adaptive == Yes.adaptive)
     {
         private enum double windowLength = 1000.0;
@@ -198,12 +200,11 @@ struct FreeList(ParentAllocator,
             }
         }
     }
-    // } statistics
 
     private struct Node { Node* next; }
     static assert(ParentAllocator.alignment >= Node.alignof);
 
-    // state {
+    // state
     /**
     The parent allocator. Depending on whether $(D ParentAllocator) holds state
     or not, this is a member variable or an alias for
@@ -214,7 +215,6 @@ struct FreeList(ParentAllocator,
     private Node* root;
     static if (minSize == chooseAtRuntime) private size_t _min = chooseAtRuntime;
     static if (maxSize == chooseAtRuntime) private size_t _max = chooseAtRuntime;
-    // }
 
     /**
     Alignment offered.
@@ -392,7 +392,6 @@ unittest
     FreeList!(GCAllocator, 0, 8) fl;
     assert(fl.root is null);
     auto b1 = fl.allocate(7);
-    //assert(fl._root !is null);
     fl.allocate(8);
     assert(fl.root is null);
     fl.deallocate(b1);
@@ -429,6 +428,7 @@ struct ContiguousFreeList(ParentAllocator,
     import std.experimental.allocator.building_blocks.stats_collector
         : StatsCollector, Options;
     import std.traits : hasMember;
+    import std.typecons : Ternary;
 
     alias Impl = FreeList!(NullAllocator, minSize, maxSize);
     enum unchecked = minSize == 0 && maxSize == unbounded;
@@ -436,7 +436,7 @@ struct ContiguousFreeList(ParentAllocator,
 
     alias SParent = StatsCollector!(ParentAllocator, Options.bytesUsed);
 
-    // state {
+    // state
     /**
     The parent allocator. Depending on whether $(D ParentAllocator) holds state
     or not, this is a member variable or an alias for
@@ -446,7 +446,6 @@ struct ContiguousFreeList(ParentAllocator,
     FreeList!(NullAllocator, minSize, maxSize) fl;
     void[] support;
     size_t allocated;
-    // }
 
     /// Alignment offered.
     enum uint alignment = (void*).alignof;
@@ -684,6 +683,7 @@ unittest
 {
     import std.experimental.allocator.building_blocks.null_allocator
         : NullAllocator;
+    import std.typecons : Ternary;
     alias A = ContiguousFreeList!(NullAllocator, 0, 64);
     auto a = A(new void[1024]);
 
@@ -708,6 +708,7 @@ unittest
 {
     import std.experimental.allocator.building_blocks.region : Region;
     import std.experimental.allocator.gc_allocator : GCAllocator;
+    import std.typecons : Ternary;
     alias A = ContiguousFreeList!(Region!GCAllocator, 0, 64);
     auto a = A(Region!GCAllocator(1024 * 4), 1024);
 
@@ -747,17 +748,18 @@ $(D expand) is defined to forward to $(ParentAllocator.expand) (it must be also
 $(D shared)).
 */
 struct SharedFreeList(ParentAllocator,
-    size_t minSize, size_t maxSize = minSize)
+    size_t minSize, size_t maxSize = minSize, size_t approxMaxNodes = unbounded)
 {
     import std.conv : text;
     import std.exception : enforce;
     import std.traits : hasMember;
 
+    static assert(approxMaxNodes, "approxMaxNodes must not be null.");
     static assert(minSize != unbounded, "Use minSize = 0 for no low bound.");
     static assert(maxSize >= (void*).sizeof,
         "Maximum size must accommodate a pointer.");
 
-    private import core.atomic;
+    import core.atomic : atomicOp, cas;
 
     static if (minSize != chooseAtRuntime)
     {
@@ -829,29 +831,40 @@ struct SharedFreeList(ParentAllocator,
         else return !tooSmall(n) && !tooLarge(n);
     }
 
-    //static if (maxNodes != unbounded)
-    //{
-    //    private shared size_t nodes;
-    //    private void incNodes() shared
-    //    {
-    //        atomicOp!("+=")(nodes, 1);
-    //    }
-    //    private void decNodes() shared
-    //    {
-    //        assert(nodes);
-    //        atomicOp!("-=")(nodes, 1);
-    //    }
-    //    private bool nodesFull() shared
-    //    {
-    //        return nodes >= maxNodes;
-    //    }
-    //}
-    //else
-    //{
+    static if (approxMaxNodes != chooseAtRuntime)
+    {
+        alias approxMaxLength = approxMaxNodes;
+    }
+    else
+    {
+        private shared size_t _approxMaxLength = chooseAtRuntime;
+        @property size_t approxMaxLength() const shared { return _approxMaxLength; }
+        @property void approxMaxLength(size_t x) shared { _approxMaxLength = enforce(x); }
+    }
+
+    static if (approxMaxNodes != unbounded)
+    {
+        private shared size_t nodes;
+        private void incNodes() shared
+        {
+            atomicOp!("+=")(nodes, 1);
+        }
+        private void decNodes() shared
+        {
+            assert(nodes);
+            atomicOp!("-=")(nodes, 1);
+        }
+        private bool nodesFull() shared
+        {
+            return nodes >= approxMaxLength;
+        }
+    }
+    else
+    {
         private static void incNodes() { }
         private static void decNodes() { }
         private enum bool nodesFull = false;
-    //}
+    }
 
     version (StdDdoc)
     {
@@ -872,13 +885,32 @@ struct SharedFreeList(ParentAllocator,
         ///
         unittest
         {
-            FreeList!(Mallocator, chooseAtRuntime, chooseAtRuntime) a;
+            SharedFreeList!(Mallocator, chooseAtRuntime, chooseAtRuntime) a;
             // Set the maxSize first so setting the minSize doesn't throw
             a.max = 128;
             a.min = 64;
             a.setBounds(64, 128); // equivalent
             assert(a.max == 128);
             assert(a.min == 64);
+        }
+
+        /**
+        Properties for getting (and possibly setting) the approximate maximum length of a shared freelist.
+        */
+        @property size_t approxMaxLength() const shared;
+        /// ditto
+        @property void approxMaxLength(size_t x) shared;
+        ///
+        unittest
+        {
+            SharedFreeList!(Mallocator, 50, 50, chooseAtRuntime) a;
+            // Set the maxSize first so setting the minSize doesn't throw
+            a.approxMaxLength = 128;
+            assert(a.approxMaxLength  == 128);
+            a.approxMaxLength = 1024;
+            assert(a.approxMaxLength  == 1024);
+            a.approxMaxLength = 1;
+            assert(a.approxMaxLength  == 1);
         }
     }
 
@@ -997,7 +1029,7 @@ unittest
     import std.range : repeat;
     import std.experimental.allocator.mallocator : Mallocator;
 
-    static shared SharedFreeList!(Mallocator, 64, 128) a;
+    static shared SharedFreeList!(Mallocator, 64, 128, 10) a;
 
     assert(a.goodAllocSize(1) == platformAlignment);
 
@@ -1030,5 +1062,26 @@ unittest
 {
     import std.experimental.allocator.mallocator : Mallocator;
     shared SharedFreeList!(Mallocator, chooseAtRuntime, chooseAtRuntime) a;
+    a.allocate(64);
+}
+
+unittest
+{
+    import std.experimental.allocator.mallocator : Mallocator;
+    shared SharedFreeList!(Mallocator, chooseAtRuntime, chooseAtRuntime, chooseAtRuntime) a;
+    a.allocate(64);
+}
+
+unittest
+{
+    import std.experimental.allocator.mallocator : Mallocator;
+    shared SharedFreeList!(Mallocator, 30, 40) a;
+    a.allocate(64);
+}
+
+unittest
+{
+    import std.experimental.allocator.mallocator : Mallocator;
+    shared SharedFreeList!(Mallocator, 30, 40, chooseAtRuntime) a;
     a.allocate(64);
 }

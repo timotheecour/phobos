@@ -4,7 +4,7 @@
 This package implements generic algorithms oriented towards the processing of
 sequences. Sequences processed by these functions define range-based
 interfaces.  See also $(LINK2 std_range.html, Reference on ranges) and
-$(WEB ddili.org/ders/d.en/ranges.html, tutorial on ranges).
+$(HTTP ddili.org/ders/d.en/ranges.html, tutorial on ranges).
 
 $(SCRIPT inhibitQuickIndex = 1;)
 
@@ -34,7 +34,11 @@ $(TR $(TDNW Searching)
         $(SUBREF searching, findSplitAfter)
         $(SUBREF searching, findSplitBefore)
         $(SUBREF searching, minCount)
+        $(SUBREF searching, maxCount)
+        $(SUBREF searching, minElement)
+        $(SUBREF searching, maxElement)
         $(SUBREF searching, minPos)
+        $(SUBREF searching, maxPos)
         $(SUBREF searching, skipOver)
         $(SUBREF searching, startsWith)
         $(SUBREF searching, until)
@@ -47,6 +51,7 @@ $(TR $(TDNW Comparison)
         $(SUBREF comparison, castSwitch)
         $(SUBREF comparison, clamp)
         $(SUBREF comparison, cmp)
+        $(SUBREF comparison, either)
         $(SUBREF comparison, equal)
         $(SUBREF comparison, isPermutation)
         $(SUBREF comparison, isSameLength)
@@ -64,9 +69,11 @@ $(TR $(TDNW Iteration)
         $(SUBREF iteration, cache)
         $(SUBREF iteration, cacheBidirectional)
         $(SUBREF iteration, chunkBy)
+        $(SUBREF iteration, cumulativeFold)
         $(SUBREF iteration, each)
         $(SUBREF iteration, filter)
         $(SUBREF iteration, filterBidirectional)
+        $(SUBREF iteration, fold)
         $(SUBREF iteration, group)
         $(SUBREF iteration, joiner)
         $(SUBREF iteration, map)
@@ -83,7 +90,11 @@ $(TR $(TDNW Sorting)
         $(SUBREF sorting, completeSort)
         $(SUBREF sorting, isPartitioned)
         $(SUBREF sorting, isSorted)
+        $(SUBREF sorting, isStrictlyMonotonic)
+        $(SUBREF sorting, ordered)
+        $(SUBREF sorting, strictlyOrdered)
         $(SUBREF sorting, makeIndex)
+        $(SUBREF sorting, merge)
         $(SUBREF sorting, multiSort)
         $(SUBREF sorting, nextEvenPermutation)
         $(SUBREF sorting, nextPermutation)
@@ -107,7 +118,6 @@ $(TR $(TDNW Set&nbsp;operations)
         $(SUBREF setops, setDifference)
         $(SUBREF setops, setIntersection)
         $(SUBREF setops, setSymmetricDifference)
-        $(SUBREF setops, setUnion)
     )
 )
 $(TR $(TDNW Mutation)
@@ -151,23 +161,22 @@ static bool greater(int a, int b)
 {
     return a > b;
 }
-sort!(greater)(a);         // predicate as alias
+sort!greater(a);           // predicate as alias
 sort!((a, b) => a > b)(a); // predicate as a lambda.
-sort!("a > b")(a);         // predicate as string
+sort!"a > b"(a);           // predicate as string
                            // (no ambiguity with array name)
 sort(a);                   // no predicate, "a < b" is implicit
 ----
 
 Macros:
-WIKI = Phobos/StdAlgorithm
-SUBMODULE = $(LINK2 std_algorithm_$1.html, std.algorithm.$1)
-SUBREF = $(LINK2 std_algorithm_$1.html#.$2, $(TT $2))$(NBSP)
+SUBMODULE = $(MREF std, algorithm, $1)
+SUBREF = $(REF_ALTTEXT $(TT $2), $2, std, algorithm, $1)$(NBSP)
 
 Copyright: Andrei Alexandrescu 2008-.
 
-License: $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
+License: $(HTTP boost.org/LICENSE_1_0.txt, Boost License 1.0).
 
-Authors: $(WEB erdani.com, Andrei Alexandrescu)
+Authors: $(HTTP erdani.com, Andrei Alexandrescu)
 
 Source: $(PHOBOSSRC std/_algorithm/package.d)
  */
@@ -182,5 +191,6 @@ public import std.algorithm.searching;
 public import std.algorithm.sorting;
 
 static import std.functional;
+// Explicitly undocumented. It will be removed in March 2017. @@@DEPRECATED_2017-03@@@
 deprecated("Please use std.functional.forward instead.")
 alias forward = std.functional.forward;

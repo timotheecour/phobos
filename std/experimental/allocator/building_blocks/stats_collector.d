@@ -120,7 +120,7 @@ enum Options : ulong
     bytesNotMoved = 1u << 15,
     /**
     Measures the sum of extra bytes allocated beyond the bytes requested, i.e.
-    the $(WEB goo.gl/YoKffF, internal fragmentation). This is the current
+    the $(HTTP goo.gl/YoKffF, internal fragmentation). This is the current
     effective number of slack bytes, and it goes up and down with time.
     */
     bytesSlack = 1u << 16,
@@ -159,6 +159,7 @@ struct StatsCollector(Allocator, ulong flags = Options.all,
 {
 private:
     import std.traits : hasMember, Signed;
+    import std.typecons : Ternary;
 
     static string define(string type, string[] names...)
     {
@@ -664,15 +665,12 @@ unittest
     alloc.reallocate(b, 20);
     alloc.deallocate(b);
 
+    import std.file : deleteme, remove;
     import std.stdio : File;
     import std.range : walkLength;
-    version(Posix)
-        auto f = "/tmp/dlang.std.experimental.allocator.stats_collector.txt";
-    version(Windows)
-    {
-        import std.process: environment;
-        auto f = environment.get("temp") ~ r"\dlang.std.experimental.allocator.stats_collector.txt";
-    }
+
+    auto f = deleteme ~ "-dlang.std.experimental.allocator.stats_collector.txt";
+    scope(exit) remove(f);
     Allocator.reportPerCallStatistics(File(f, "w"));
     alloc.reportStatistics(File(f, "a"));
     assert(File(f).byLine.walkLength == 22);
@@ -705,10 +703,6 @@ unittest
         assert(a.numDeallocate == 3);
         assert(a.numAllocate == a.numDeallocate);
         assert(a.bytesUsed == 0);
-
-        //import std.stdio;
-        //Allocator.reportPerCallStatistics(stdout);
-        //a.reportStatistics(stdout);
      }
 
     import std.experimental.allocator.gc_allocator : GCAllocator;

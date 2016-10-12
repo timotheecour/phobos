@@ -12,19 +12,59 @@
  * take a single argument and evaluate to a boolean constant. Such templates
  * are referred to as $(I template predicates).
  *
+ * $(SCRIPT inhibitQuickIndex = 1;)
+ * $(DIVC quickindex,
+ * $(BOOKTABLE ,
+ * $(TR $(TH Category) $(TH Templates))
+ * $(TR $(TD Building blocks) $(TD
+ *           $(LREF Alias)
+ *           $(LREF AliasSeq)
+ *           $(LREF aliasSeqOf)
+ * ))
+ * $(TR $(TD Alias sequence filtering) $(TD
+ *           $(LREF Erase)
+ *           $(LREF EraseAll)
+ *           $(LREF Filter)
+ *           $(LREF NoDuplicates)
+ * ))
+ * $(TR $(TD Alias sequence type hierarchy) $(TD
+ *           $(LREF DerivedToFront)
+ *           $(LREF MostDerived)
+ * ))
+ * $(TR $(TD Alias sequence transformation) $(TD
+ *           $(LREF Repeat)
+ *           $(LREF Replace)
+ *           $(LREF ReplaceAll)
+ *           $(LREF Reverse)
+ *           $(LREF staticMap)
+ *           $(LREF staticSort)
+ * ))
+ * $(TR $(TD Alias sequence searching) $(TD
+ *           $(LREF allSatisfy)
+ *           $(LREF anySatisfy)
+ *           $(LREF staticIndexOf)
+ * ))
+ * $(TR $(TD Boolean template predicate operators) $(TD
+ *           $(LREF templateAnd)
+ *           $(LREF templateNot)
+ *           $(LREF templateOr)
+ * ))
+ * $(TR $(TD Template instantiation) $(TD
+ *           $(LREF ApplyLeft)
+ *           $(LREF ApplyRight)
+ * ))
+ * ))
+ *
  * References:
  *  Based on ideas in Table 3.1 from
  *  $(LINK2 http://amazon.com/exec/obidos/ASIN/0201704315/ref=ase_classicempire/102-2957199-2585768,
  *      Modern C++ Design),
  *   Andrei Alexandrescu (Addison-Wesley Professional, 2001)
- * Macros:
- *  WIKI = Phobos/StdMeta
- *
  * Copyright: Copyright Digital Mars 2005 - 2015.
- * License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
+ * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:
- *     $(WEB digitalmars.com, Walter Bright),
- *     $(WEB klickverbot.at, David Nadlinger)
+ *     $(HTTP digitalmars.com, Walter Bright),
+ *     $(HTTP klickverbot.at, David Nadlinger)
  * Source:    $(PHOBOSSRC std/_meta.d)
  */
 
@@ -40,7 +80,7 @@ template AliasSeq(TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.meta;
     alias TL = AliasSeq!(int, double);
@@ -52,12 +92,109 @@ unittest
 }
 
 ///
-unittest
+@safe unittest
 {
     alias TL = AliasSeq!(int, double);
 
     alias Types = AliasSeq!(TL, char);
     static assert(is(Types == AliasSeq!(int, double, char)));
+}
+
+/**
+ * Allows `alias`ing of any single symbol, type or compile-time expression.
+ *
+ * Not everything can be directly aliased. An alias cannot be declared
+ * of - for example - a literal:
+ *
+ * `alias a = 4; //Error`
+ *
+ * With this template any single entity can be aliased:
+ *
+ * `alias b = Alias!4; //OK`
+ *
+ * See_Also:
+ * To alias more than one thing at once, use $(LREF AliasSeq)
+ */
+alias Alias(alias a) = a;
+
+/// Ditto
+alias Alias(T) = T;
+
+///
+@safe unittest
+{
+    // Without Alias this would fail if Args[0] was e.g. a value and
+    // some logic would be needed to detect when to use enum instead
+    alias Head(Args ...) = Alias!(Args[0]);
+    alias Tail(Args ...) = Args[1 .. $];
+
+    alias Blah = AliasSeq!(3, int, "hello");
+    static assert(Head!Blah == 3);
+    static assert(is(Head!(Tail!Blah) == int));
+    static assert((Tail!Blah)[1] == "hello");
+}
+
+///
+@safe unittest
+{
+    alias a = Alias!(123);
+    static assert(a == 123);
+
+    enum abc = 1;
+    alias b = Alias!(abc);
+    static assert(b == 1);
+
+    alias c = Alias!(3 + 4);
+    static assert(c == 7);
+
+    alias concat = (s0, s1) => s0 ~ s1;
+    alias d = Alias!(concat("Hello", " World!"));
+    static assert(d == "Hello World!");
+
+    alias e = Alias!(int);
+    static assert(is(e == int));
+
+    alias f = Alias!(AliasSeq!(int));
+    static assert(!is(typeof(f[0]))); //not an AliasSeq
+    static assert(is(f == int));
+
+    auto g = 6;
+    alias h = Alias!g;
+    ++h;
+    assert(g == 7);
+}
+
+package template OldAlias(alias a)
+{
+    static if (__traits(compiles, { alias x = a; }))
+        alias OldAlias = a;
+    else static if (__traits(compiles, { enum x = a; }))
+        enum OldAlias = a;
+    else
+        static assert(0, "Cannot alias " ~ a.stringof);
+}
+
+import std.traits : isAggregateType, Unqual;
+
+package template OldAlias(T) if (!isAggregateType!T || is(Unqual!T == T))
+{
+    alias OldAlias = T;
+}
+
+deprecated("Alias will stop to unqualify user defined types.")
+package template OldAlias(T) if (isAggregateType!T && !is(Unqual!T == T))
+{
+    alias OldAlias = Unqual!T;
+}
+
+@safe unittest
+{
+    static struct Foo {}
+    static assert(is(OldAlias!(const(Foo)) == Foo));
+    static assert(is(OldAlias!(const(int)) == const(int)));
+    static assert(OldAlias!123 == 123);
+    enum abc = 123;
+    static assert(OldAlias!abc == 123);
 }
 
 /**
@@ -77,7 +214,7 @@ template staticIndexOf(alias T, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.stdio;
 
@@ -93,12 +230,12 @@ unittest
 private template genericIndexOf(args...)
     if (args.length >= 1)
 {
-    alias e     = Alias!(args[0]);
+    alias e     = OldAlias!(args[0]);
     alias tuple = args[1 .. $];
 
     static if (tuple.length)
     {
-        alias head = Alias!(tuple[0]);
+        alias head = OldAlias!(tuple[0]);
         alias tail = tuple[1 .. $];
 
         static if (isSame!(e, head))
@@ -117,7 +254,7 @@ private template genericIndexOf(args...)
     }
 }
 
-unittest
+@safe unittest
 {
     static assert(staticIndexOf!( byte, byte, short, int, long) ==  0);
     static assert(staticIndexOf!(short, byte, short, int, long) ==  1);
@@ -139,7 +276,8 @@ unittest
     static assert(staticIndexOf!("void", 0, void, "void") == 2);
 }
 
-/// Kept for backwards compatibility
+// Explicitly undocumented. It will be removed in February 2017. @@@DEPRECATED_2017-02@@@
+deprecated("Please use staticIndexOf")
 alias IndexOf = staticIndexOf;
 
 /**
@@ -158,7 +296,7 @@ template Erase(alias T, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, double, char);
     alias TL = Erase!(long, Types);
@@ -169,12 +307,12 @@ unittest
 private template GenericErase(args...)
     if (args.length >= 1)
 {
-    alias e     = Alias!(args[0]);
+    alias e     = OldAlias!(args[0]);
     alias tuple = args[1 .. $] ;
 
     static if (tuple.length)
     {
-        alias head = Alias!(tuple[0]);
+        alias head = OldAlias!(tuple[0]);
         alias tail = tuple[1 .. $];
 
         static if (isSame!(e, head))
@@ -188,7 +326,7 @@ private template GenericErase(args...)
     }
 }
 
-unittest
+@safe unittest
 {
     static assert(Pack!(Erase!(int,
                 short, int, int, 4)).
@@ -216,7 +354,7 @@ template EraseAll(alias T, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, long, int);
 
@@ -228,14 +366,17 @@ unittest
 private template GenericEraseAll(args...)
     if (args.length >= 1)
 {
-    alias e     = Alias!(args[0]);
+    alias e     = OldAlias!(args[0]);
     alias tuple = args[1 .. $];
 
     static if (tuple.length)
     {
-        alias head = Alias!(tuple[0]);
+        alias head = OldAlias!(tuple[0]);
         alias tail = tuple[1 .. $];
-        alias next = GenericEraseAll!(e, tail).result;
+        alias next = AliasSeq!(
+            GenericEraseAll!(e, tail[0..$/2]).result,
+            GenericEraseAll!(e, tail[$/2..$]).result
+            );
 
         static if (isSame!(e, head))
             alias result = next;
@@ -248,7 +389,7 @@ private template GenericEraseAll(args...)
     }
 }
 
-unittest
+@safe unittest
 {
     static assert(Pack!(EraseAll!(int,
                 short, int, int, 4)).
@@ -266,23 +407,48 @@ unittest
  */
 template NoDuplicates(TList...)
 {
-    static if (TList.length == 0)
+    template EraseAllN(uint N, T...)
+    {
+        static if (N <= 1)
+        {
+            alias EraseAllN = T;
+        }
+        else
+        {
+            alias EraseAllN = EraseAllN!(N-1, T[1..N], EraseAll!(T[0], T[N..$]));
+        }
+    }
+    static if (TList.length > 500)
+    {
+        enum steps = 16;
+        alias first = NoDuplicates!(TList[0..steps]);
+        alias NoDuplicates = NoDuplicates!(EraseAllN!(first.length, first, TList[steps..$]));
+    }
+    else static if (TList.length == 0)
+    {
         alias NoDuplicates = TList;
+    }
     else
+    {
         alias NoDuplicates =
             AliasSeq!(TList[0], NoDuplicates!(EraseAll!(TList[0], TList[1 .. $])));
+    }
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, long, int, float);
 
     alias TL = NoDuplicates!(Types);
     static assert(is(TL == AliasSeq!(int, long, float)));
+
+    // Bugzilla 14561: huge enums
+    alias LongList = Repeat!(1500, int);
+    static assert(NoDuplicates!LongList.length == 1);
 }
 
-unittest
+@safe unittest
 {
     static assert(
         Pack!(
@@ -319,7 +485,7 @@ template Replace(alias T, alias U, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, long, int, float);
 
@@ -331,13 +497,13 @@ unittest
 private template GenericReplace(args...)
     if (args.length >= 2)
 {
-    alias from  = Alias!(args[0]);
-    alias to    = Alias!(args[1]);
+    alias from  = OldAlias!(args[0]);
+    alias to    = OldAlias!(args[1]);
     alias tuple = args[2 .. $];
 
     static if (tuple.length)
     {
-        alias head = Alias!(tuple[0]);
+        alias head = OldAlias!(tuple[0]);
         alias tail = tuple[1 .. $];
 
         static if (isSame!(from, head))
@@ -352,7 +518,7 @@ private template GenericReplace(args...)
     }
  }
 
-unittest
+@safe unittest
 {
     static assert(Pack!(Replace!(byte, ubyte,
                 short,  byte, byte, byte)).
@@ -399,7 +565,7 @@ template ReplaceAll(alias T, alias U, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, long, int, float);
 
@@ -411,13 +577,13 @@ unittest
 private template GenericReplaceAll(args...)
     if (args.length >= 2)
 {
-    alias from  = Alias!(args[0]);
-    alias to    = Alias!(args[1]);
+    alias from  = OldAlias!(args[0]);
+    alias to    = OldAlias!(args[1]);
     alias tuple = args[2 .. $];
 
     static if (tuple.length)
     {
-        alias head = Alias!(tuple[0]);
+        alias head = OldAlias!(tuple[0]);
         alias tail = tuple[1 .. $];
         alias next = GenericReplaceAll!(from, to, tail).result;
 
@@ -432,7 +598,7 @@ private template GenericReplaceAll(args...)
     }
 }
 
-unittest
+@safe unittest
 {
     static assert(Pack!(ReplaceAll!(byte, ubyte,
                  byte, short,  byte,  byte)).
@@ -470,7 +636,7 @@ template Reverse(TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     alias Types = AliasSeq!(int, long, long, int, float);
 
@@ -493,7 +659,7 @@ template MostDerived(T, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     class A { }
     class B : A { }
@@ -521,7 +687,7 @@ template DerivedToFront(TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     class A { }
     class B : A { }
@@ -555,14 +721,14 @@ template staticMap(alias F, T...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : Unqual;
     alias TL = staticMap!(Unqual, int, const int, immutable int);
     static assert(is(TL == AliasSeq!(int, int, int)));
 }
 
-unittest
+@safe unittest
 {
     import std.traits : Unqual;
 
@@ -604,7 +770,7 @@ template allSatisfy(alias F, T...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isIntegral;
 
@@ -621,7 +787,7 @@ template predicate must be instantiable with all the given items.
  */
 template anySatisfy(alias F, T...)
 {
-    static if(T.length == 0)
+    static if (T.length == 0)
     {
         enum anySatisfy = false;
     }
@@ -638,7 +804,7 @@ template anySatisfy(alias F, T...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isIntegral;
 
@@ -674,7 +840,7 @@ template Filter(alias pred, TList...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isNarrowString, isUnsigned;
 
@@ -687,7 +853,7 @@ unittest
     static assert(is(TL2 == AliasSeq!(ubyte, uint, ulong)));
 }
 
-unittest
+@safe unittest
 {
     import std.traits : isPointer;
 
@@ -725,7 +891,7 @@ template templateNot(alias pred)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isPointer;
 
@@ -734,7 +900,7 @@ unittest
     static assert(allSatisfy!(isNoPointer, string, char, float));
 }
 
-unittest
+@safe unittest
 {
     foreach (T; AliasSeq!(int, staticMap, 42))
     {
@@ -772,7 +938,7 @@ template templateAnd(Preds...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isNumeric, isUnsigned;
 
@@ -785,7 +951,7 @@ unittest
     static assert(alwaysTrue!int);
 }
 
-unittest
+@safe unittest
 {
     foreach (T; AliasSeq!(int, staticMap, 42))
     {
@@ -830,7 +996,7 @@ template templateOr(Preds...)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.traits : isPointer, isUnsigned;
 
@@ -843,7 +1009,7 @@ unittest
     static assert(!alwaysFalse!int);
 }
 
-unittest
+@safe unittest
 {
     foreach (T; AliasSeq!(int, staticMap, 42))
     {
@@ -868,7 +1034,6 @@ unittest
  */
 template aliasSeqOf(alias range)
 {
-    import std.range : isInputRange;
     import std.traits : isArray, isNarrowString;
 
     alias ArrT = typeof(range);
@@ -887,22 +1052,26 @@ template aliasSeqOf(alias range)
             alias aliasSeqOf = AliasSeq!(aliasSeqOf!(range[0 .. $/2]), aliasSeqOf!(range[$/2 .. $]));
         }
     }
-    else static if (isInputRange!ArrT)
-    {
-        import std.array : array;
-        alias aliasSeqOf = aliasSeqOf!(array(range));
-    }
     else
     {
-        import std.string : format;
-        static assert(false, format("Cannot transform %s of type %s into a AliasSeq.", range, ArrT.stringof));
+        import std.range.primitives : isInputRange;
+        static if (isInputRange!ArrT)
+        {
+            import std.array : array;
+            alias aliasSeqOf = aliasSeqOf!(array(range));
+        }
+        else
+        {
+            static assert(false, "Cannot transform range of type " ~ ArrT.stringof ~ " into a AliasSeq.");
+        }
     }
 }
 
 ///
-unittest
+@safe unittest
 {
-    import std.algorithm : map, sort;
+    import std.algorithm.iteration : map;
+    import std.algorithm.sorting : sort;
     import std.string : capitalize;
 
     struct S
@@ -919,17 +1088,17 @@ unittest
 }
 
 ///
-unittest
+@safe unittest
 {
-    enum REF = [0, 1, 2, 3];
-    foreach(I, V; aliasSeqOf!([0, 1, 2, 3]))
+    static immutable REF = [0, 1, 2, 3];
+    foreach (I, V; aliasSeqOf!([0, 1, 2, 3]))
     {
         static assert(V == I);
         static assert(V == REF[I]);
     }
 }
 
-unittest
+@safe unittest
 {
     import std.range : iota;
     import std.conv : to, octal;
@@ -945,53 +1114,269 @@ unittest
         }
 }
 
-unittest
+@safe unittest
 {
     enum REF = "日本語"d;
-    foreach(I, V; aliasSeqOf!"日本語"c)
+    foreach (I, V; aliasSeqOf!"日本語"c)
     {
         static assert(V == REF[I]);
     }
 }
 
-
-// : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : //
-package:
-
-/*
- * With the builtin alias declaration, you cannot declare
- * aliases of, for example, literal values. You can alias anything
- * including literal values via this template.
- */
-// symbols and literal values
-template Alias(alias a)
+/**
+  * $(LINK2 http://en.wikipedia.org/wiki/Partial_application, Partially applies)
+  * $(D_PARAM Template) by binding its first (left) or last (right) arguments
+  * to $(D_PARAM args).
+  *
+  * Behaves like the identity function when $(D_PARAM args) is empty.
+  * Params:
+  *    Template = template to partially apply
+  *    args     = arguments to bind
+  * Returns:
+  *    _Template with arity smaller than or equal to $(D_PARAM Template)
+  */
+template ApplyLeft(alias Template, args...)
 {
-    static if (__traits(compiles, { alias x = a; }))
-        alias Alias = a;
-    else static if (__traits(compiles, { enum x = a; }))
-        enum Alias = a;
+    alias ApplyLeft(right...) = SmartAlias!(Template!(args, right));
+}
+
+/// Ditto
+template ApplyRight(alias Template, args...)
+{
+    alias ApplyRight(left...) = SmartAlias!(Template!(left, args));
+}
+
+private template SmartAlias(T...) {
+    static if (T.length == 1)
+    {
+        alias SmartAlias = Alias!T;
+    }
     else
-        static assert(0, "Cannot alias " ~ a.stringof);
-}
-// types and tuples
-template Alias(a...)
-{
-    alias Alias = a;
+    {
+        alias SmartAlias = AliasSeq!T;
+    }
 }
 
-unittest
+///
+@safe unittest
 {
-    enum abc = 1;
-    alias a = Alias!(123);
-    static assert(a == 123);
-    alias b = Alias!(abc);
-    static assert(b == 1);
-    alias c = Alias!(int);
-    static assert(is(c[0] == int));
-    alias d = Alias!(1, abc, int);
-    static assert(d[0] == 1 && d[1] == 1 && is(d[2] == int));
+    import std.traits : isImplicitlyConvertible;
+
+    static assert(allSatisfy!(
+        ApplyLeft!(isImplicitlyConvertible, ubyte),
+        short, ushort, int, uint, long, ulong));
+
+    static assert(is(Filter!(ApplyRight!(isImplicitlyConvertible, short),
+        ubyte, string, short, float, int) == AliasSeq!(ubyte, short)));
 }
 
+@safe unittest
+{
+    static assert(is(typeof({
+        alias T(T0, int a, double b, alias T1, string c) = AliasSeq!(T0, a, b, T1, c);
+        alias T0 = ApplyRight!(ApplyLeft, ApplyRight);
+        alias T1 = T0!ApplyLeft;
+        alias T2 = T1!T;
+        alias T3 = T2!(3, "foo");
+        alias T4 = T3!(short, 3, 3.3);
+        static assert(Pack!T4.equals!(short, 3, 3.3, 3, "foo"));
+
+        import std.traits : isImplicitlyConvertible;
+        alias U1 = ApplyLeft!(ApplyRight, isImplicitlyConvertible);
+        alias U2 = U1!int;
+        enum U3 = U2!short;
+        static assert(U3);
+    })));
+}
+
+///
+@safe unittest
+{
+    import std.traits : hasMember, ifTestable;
+
+    struct T1
+    {
+        bool foo;
+    }
+
+    struct T2
+    {
+        struct Test
+        {
+            bool opCast(T : bool)() { return true; }
+        }
+
+        Test foo;
+    }
+
+    static assert(allSatisfy!(ApplyRight!(hasMember, "foo"), T1, T2));
+    static assert(allSatisfy!(ApplyRight!(ifTestable, a => a.foo), T1, T2));
+}
+
+///
+@safe unittest
+{
+    import std.traits : Largest;
+
+    alias Types = AliasSeq!(byte, short, int, long);
+
+    static assert(is(staticMap!(ApplyLeft!(Largest, short), Types) ==
+                AliasSeq!(short, short, int, long)));
+    static assert(is(staticMap!(ApplyLeft!(Largest, int), Types) ==
+                AliasSeq!(int, int, int, long)));
+}
+
+///
+@safe unittest
+{
+    import std.traits : FunctionAttribute, SetFunctionAttributes;
+
+    static void foo() @system;
+    static int bar(int) @system;
+
+    alias SafeFunctions = AliasSeq!(
+        void function() @safe,
+        int function(int) @safe);
+
+    static assert(is(staticMap!(ApplyRight!(
+        SetFunctionAttributes, "D", FunctionAttribute.safe),
+        typeof(&foo), typeof(&bar)) == SafeFunctions));
+}
+
+/**
+ * Creates an `AliasSeq` which repeats a type or an `AliasSeq` exactly `n` times.
+ */
+template Repeat(size_t n, TList...) if (n > 0)
+{
+    static if (n == 1)
+    {
+        alias Repeat = AliasSeq!TList;
+    }
+    else static if (n == 2)
+    {
+        alias Repeat = AliasSeq!(TList, TList);
+    }
+    else
+    {
+        alias R = Repeat!((n - 1) / 2, TList);
+        static if ((n - 1) % 2 == 0)
+        {
+            alias Repeat = AliasSeq!(TList, R, R);
+        }
+        else
+        {
+            alias Repeat = AliasSeq!(TList, TList, R, R);
+        }
+    }
+}
+
+///
+@safe unittest
+{
+    alias ImInt1 = Repeat!(1, immutable(int));
+    static assert(is(ImInt1 == AliasSeq!(immutable(int))));
+
+    alias Real3 = Repeat!(3, real);
+    static assert(is(Real3 == AliasSeq!(real, real, real)));
+
+    alias Real12 = Repeat!(4, Real3);
+    static assert(is(Real12 == AliasSeq!(real, real, real, real, real, real,
+        real, real, real, real, real, real)));
+
+    alias Composite = AliasSeq!(uint, int);
+    alias Composite2 = Repeat!(2, Composite);
+    static assert(is(Composite2 == AliasSeq!(uint, int, uint, int)));
+}
+
+
+///
+@safe unittest
+{
+    auto staticArray(T, size_t n)(Repeat!(n, T) elems)
+    {
+        T[n] a = [elems];
+        return a;
+    }
+
+    auto a = staticArray!(long, 3)(3, 1, 4);
+    assert(is(typeof(a) == long[3]));
+    assert(a == [3, 1, 4]);
+}
+
+/**
+ * Sorts a $(LREF AliasSeq) using $(D cmp).
+ *
+ * Parameters:
+ *     cmp = A template that returns a $(D bool) (if its first argument is less than the second one)
+ *         or an $(D int) (-1 means less than, 0 means equal, 1 means greater than)
+ *
+ *     Seq = The  $(LREF AliasSeq) to sort
+ *
+ * Returns: The sorted alias sequence
+ */
+template staticSort(alias cmp, Seq...)
+{
+    static if (Seq.length < 2)
+    {
+        alias staticSort = Seq;
+    }
+    else
+    {
+        private alias bottom = staticSort!(cmp, Seq[0 .. $ / 2]);
+        private alias top = staticSort!(cmp, Seq[$ / 2 .. $]);
+        alias staticSort = staticMerge!(cmp, Seq.length / 2, bottom, top);
+    }
+}
+
+///
+@safe unittest
+{
+    alias Nums = AliasSeq!(7, 2, 3, 23);
+    enum Comp(int N1, int N2) = N1 < N2;
+    static assert(AliasSeq!(2, 3, 7, 23) == staticSort!(Comp, Nums));
+}
+
+///
+@safe unittest
+{
+    alias Types = AliasSeq!(uint, short, ubyte, long, ulong);
+    enum Comp(T1, T2) = __traits(isUnsigned, T2) - __traits(isUnsigned, T1);
+    static assert(is(AliasSeq!(uint, ubyte, ulong, short, long) == staticSort!(Comp,
+        Types)));
+}
+
+private template staticMerge(alias cmp, int half, Seq...)
+{
+    static if (half == 0 || half == Seq.length)
+    {
+        alias staticMerge = Seq;
+    }
+    else
+    {
+        private enum Result = cmp!(Seq[0], Seq[half]);
+        static if (is(typeof(Result) == bool))
+        {
+            private enum Check = Result;
+        }
+        else static if (is(typeof(Result) : int))
+        {
+            private enum Check = Result <= 0;
+        }
+        else
+        {
+            static assert(0, typeof(Result).stringof ~ " is not a value comparison type");
+        }
+        static if (Check)
+        {
+            alias staticMerge = AliasSeq!(Seq[0], staticMerge!(cmp, half - 1, Seq[1 .. $]));
+        }
+        else
+        {
+            alias staticMerge = AliasSeq!(Seq[half], staticMerge!(cmp, half,
+                Seq[0 .. half], Seq[half + 1 .. $]));
+        }
+    }
+}
 
 // : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : //
 private:
@@ -1032,7 +1417,7 @@ private template isSame(ab...)
 private template expectType(T) {}
 private template expectBool(bool b) {}
 
-unittest
+@safe unittest
 {
     static assert( isSame!(int, int));
     static assert(!isSame!(int, short));
@@ -1103,7 +1488,7 @@ private template Pack(T...)
     }
 }
 
-unittest
+@safe unittest
 {
     static assert( Pack!(1, int, "abc").equals!(1, int, "abc"));
     static assert(!Pack!(1, int, "abc").equals!(1, int, "cba"));

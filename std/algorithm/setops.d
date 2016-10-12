@@ -1,12 +1,10 @@
 // Written in the D programming language.
 /**
-This is a submodule of $(LINK2 std_algorithm.html, std.algorithm).
+This is a submodule of $(MREF std, algorithm).
 It contains generic algorithms that implement set operations.
 
 $(BOOKTABLE Cheat Sheet,
-
 $(TR $(TH Function Name) $(TH Description))
-
 $(T2 cartesianProduct,
         Computes Cartesian product of two ranges.)
 $(T2 largestPartialIntersection,
@@ -24,15 +22,13 @@ $(T2 setIntersection,
 $(T2 setSymmetricDifference,
         Lazily computes the symmetric set difference of two or more sorted
         ranges.)
-$(T2 setUnion,
-        Lazily computes the set union of two or more sorted ranges.)
 )
 
 Copyright: Andrei Alexandrescu 2008-.
 
-License: $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0).
+License: $(HTTP boost.org/LICENSE_1_0.txt, Boost License 1.0).
 
-Authors: $(WEB erdani.com, Andrei Alexandrescu)
+Authors: $(HTTP erdani.com, Andrei Alexandrescu)
 
 Source: $(PHOBOSSRC std/algorithm/_setops.d)
 
@@ -48,6 +44,9 @@ import std.functional; // : unaryFun, binaryFun;
 import std.traits;
 // FIXME
 import std.meta; // : AliasSeq, staticMap, allSatisfy, anySatisfy;
+
+import std.algorithm.sorting; // : Merge;
+import std.typecons : No;
 
 // cartesianProduct
 /**
@@ -74,7 +73,7 @@ Params:
     otherRanges = Zero or more non-infinite forward ranges
 
 Returns:
-    A forward range of $(XREF typecons,Tuple) representing elements of the
+    A forward range of $(REF Tuple, std,typecons) representing elements of the
     cartesian product of the given ranges.
 */
 auto cartesianProduct(R1, R2)(R1 range1, R2 range2)
@@ -341,7 +340,6 @@ auto cartesianProduct(R1, R2)(R1 range1, R2 range2)
 // Issue 13091
 pure nothrow @safe @nogc unittest
 {
-    import std.algorithm: cartesianProduct;
     int[1] a = [1];
     foreach (t; cartesianProduct(a[], a[])) {}
 }
@@ -525,6 +523,7 @@ auto cartesianProduct(R1, R2, RR...)(R1 range1, R2 range2, RR otherRanges)
 
 pure @safe nothrow @nogc unittest
 {
+    import std.range.primitives : isForwardRange;
     int[2] A = [1,2];
     auto C = cartesianProduct(A[], A[], A[]);
     assert(isForwardRange!(typeof(C)));
@@ -557,31 +556,6 @@ Params:
     tgt = The target range to copy common elements to.
     sorted = Whether the elements copied should be in sorted order.
 
-Example:
-----
-// Figure which number can be found in most arrays of the set of
-// arrays below.
-double[][] a =
-[
-    [ 1, 4, 7, 8 ],
-    [ 1, 7 ],
-    [ 1, 7, 8],
-    [ 4 ],
-    [ 7 ],
-];
-auto b = new Tuple!(double, uint)[1];
-largestPartialIntersection(a, b);
-// First member is the item, second is the occurrence count
-assert(b[0] == tuple(7.0, 4u));
-----
-
-$(D 7.0) is the correct answer because it occurs in $(D 4) out of the
-$(D 5) inputs, more than any other number. The second member of the
-resulting tuple is indeed $(D 4) (recording the number of occurrences
-of $(D 7.0)). If more of the top-frequent numbers are needed, just
-create a larger $(D tgt) range. In the example above, creating $(D b)
-with length $(D 2) yields $(D tuple(1.0, 3u)) in the second position.
-
 The function $(D largestPartialIntersection) is useful for
 e.g. searching an $(LUCKY inverted index) for the documents most
 likely to contain some terms of interest. The complexity of the search
@@ -601,7 +575,7 @@ duplicate in between calls).
  */
 void largestPartialIntersection
 (alias less = "a < b", RangeOfRanges, Range)
-(RangeOfRanges ror, Range tgt, SortOutput sorted = SortOutput.no)
+(RangeOfRanges ror, Range tgt, SortOutput sorted = No.sortOutput)
 {
     struct UnitWeights
     {
@@ -609,6 +583,36 @@ void largestPartialIntersection
     }
     return largestPartialIntersectionWeighted!less(ror, tgt, UnitWeights(),
             sorted);
+}
+
+///
+unittest
+{
+    import std.typecons : tuple, Tuple;
+
+    // Figure which number can be found in most arrays of the set of
+    // arrays below.
+    double[][] a =
+    [
+        [ 1, 4, 7, 8 ],
+        [ 1, 7 ],
+        [ 1, 7, 8],
+        [ 4 ],
+        [ 7 ],
+    ];
+    auto b = new Tuple!(double, uint)[1];
+    // it will modify the input range, hence we need to create a duplicate
+    largestPartialIntersection(a.dup, b);
+    // First member is the item, second is the occurrence count
+    assert(b[0] == tuple(7.0, 4u));
+    // 7.0 occurs in 4 out of 5 inputs, more than any other number
+
+    // If more of the top-frequent numbers are needed, just create a larger
+    // tgt range
+    auto c = new Tuple!(double, uint)[2];
+    largestPartialIntersection(a, c);
+    assert(c[0] == tuple(1.0, 3u));
+    // 1.0 occurs in 3 inputs
 }
 
 import std.algorithm.sorting : SortOutput; // FIXME
@@ -625,33 +629,10 @@ Params:
     weights = An associative array mapping elements to weights.
     sorted = Whether the elements copied should be in sorted order.
 
-Example:
-----
-// Figure which number can be found in most arrays of the set of
-// arrays below, with specific per-element weights
-double[][] a =
-[
-    [ 1, 4, 7, 8 ],
-    [ 1, 7 ],
-    [ 1, 7, 8],
-    [ 4 ],
-    [ 7 ],
-];
-auto b = new Tuple!(double, uint)[1];
-double[double] weights = [ 1:1.2, 4:2.3, 7:1.1, 8:1.1 ];
-largestPartialIntersectionWeighted(a, b, weights);
-// First member is the item, second is the occurrence count
-assert(b[0] == tuple(4.0, 2u));
-----
-
-The correct answer in this case is $(D 4.0), which, although only
-appears two times, has a total weight $(D 4.6) (three times its weight
-$(D 2.3)). The value $(D 7) is weighted with $(D 1.1) and occurs four
-times for a total weight $(D 4.4).
- */
+*/
 void largestPartialIntersectionWeighted
 (alias less = "a < b", RangeOfRanges, Range, WeightsAA)
-(RangeOfRanges ror, Range tgt, WeightsAA weights, SortOutput sorted = SortOutput.no)
+(RangeOfRanges ror, Range tgt, WeightsAA weights, SortOutput sorted = No.sortOutput)
 {
     import std.algorithm.iteration : group;
     import std.algorithm.sorting : topNCopy;
@@ -665,10 +646,34 @@ void largestPartialIntersectionWeighted
     topNCopy!heapComp(group(nWayUnion!less(ror)), tgt, sorted);
 }
 
+///
+unittest
+{
+    import std.typecons : tuple, Tuple;
+
+    // Figure which number can be found in most arrays of the set of
+    // arrays below, with specific per-element weights
+    double[][] a =
+    [
+        [ 1, 4, 7, 8 ],
+        [ 1, 7 ],
+        [ 1, 7, 8],
+        [ 4 ],
+        [ 7 ],
+    ];
+    auto b = new Tuple!(double, uint)[1];
+    double[double] weights = [ 1:1.2, 4:2.3, 7:1.1, 8:1.1 ];
+    largestPartialIntersectionWeighted(a, b, weights);
+    // First member is the item, second is the occurrence count
+    assert(b[0] == tuple(4.0, 2u));
+    // 4.0 occurs 2 times -> 4.6 (2 * 2.3)
+    // 7.0 occurs 3 times -> 4.4 (3 * 1.1)
+}
+
 unittest
 {
     import std.conv : text;
-    import std.typecons : tuple, Tuple;
+    import std.typecons : tuple, Tuple, Yes;
 
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
@@ -682,7 +687,7 @@ unittest
             [ 7 ],
         ];
     auto b = new Tuple!(double, uint)[2];
-    largestPartialIntersection(a, b, SortOutput.yes);
+    largestPartialIntersection(a, b, Yes.sortOutput);
     //sort(b);
     //writeln(b);
     assert(b == [ tuple(7.0, 4u), tuple(1.0, 3u) ][], text(b));
@@ -692,7 +697,7 @@ unittest
 unittest
 {
     import std.conv : text;
-    import std.typecons : tuple, Tuple;
+    import std.typecons : tuple, Tuple, Yes;
 
     debug(std_algorithm) scope(success)
         writeln("unittest @", __FILE__, ":", __LINE__, " done.");
@@ -706,7 +711,7 @@ unittest
             [ "7" ],
         ];
     auto b = new Tuple!(string, uint)[2];
-    largestPartialIntersection(a, b, SortOutput.yes);
+    largestPartialIntersection(a, b, Yes.sortOutput);
     //writeln(b);
     assert(b == [ tuple("7", 4u), tuple("1", 3u) ][], text(b));
 }
@@ -782,14 +787,17 @@ struct NWayUnion(alias less, RangeOfRanges)
     private alias ElementType = .ElementType!(.ElementType!RangeOfRanges);
     private alias comp = binaryFun!less;
     private RangeOfRanges _ror;
+
+    ///
     static bool compFront(.ElementType!RangeOfRanges a,
             .ElementType!RangeOfRanges b)
     {
         // revert comparison order so we get the smallest elements first
         return comp(b.front, a.front);
     }
-    BinaryHeap!(RangeOfRanges, compFront) _heap;
+    private BinaryHeap!(RangeOfRanges, compFront) _heap;
 
+    ///
     this(RangeOfRanges ror)
     {
         import std.algorithm.mutation : remove, SwapStrategy;
@@ -801,13 +809,16 @@ struct NWayUnion(alias less, RangeOfRanges)
         _heap.acquire(_ror);
     }
 
+    ///
     @property bool empty() { return _ror.empty; }
 
+    ///
     @property auto ref front()
     {
         return _heap.front.front;
     }
 
+    ///
     void popFront()
     {
         _heap.removeFront();
@@ -894,6 +905,7 @@ private:
     }
 
 public:
+    ///
     this(R1 r1, R2 r2)
     {
         this.r1 = r1;
@@ -902,12 +914,14 @@ public:
         adjustPosition();
     }
 
+    ///
     void popFront()
     {
         r1.popFront();
         adjustPosition();
     }
 
+    ///
     @property auto ref front()
     {
         assert(!empty);
@@ -916,6 +930,7 @@ public:
 
     static if (isForwardRange!R1 && isForwardRange!R2)
     {
+        ///
         @property typeof(this) save()
         {
             auto ret = this;
@@ -925,6 +940,7 @@ public:
         }
     }
 
+    ///
     @property bool empty() { return r1.empty; }
 }
 
@@ -939,6 +955,7 @@ SetDifference!(less, R1, R2) setDifference(alias less = "a < b", R1, R2)
 @safe unittest
 {
     import std.algorithm.comparison : equal;
+    import std.range.primitives : isForwardRange;
 
     int[] a = [ 1, 2, 4, 5, 7, 9 ];
     int[] b = [ 0, 1, 2, 4, 7, 8 ];
@@ -995,7 +1012,7 @@ private:
                     do {
                         next.popFront();
                         if (next.empty) return;
-                    } while(comp(next.front, r.front));
+                    } while (comp(next.front, r.front));
                     done = Rs.length;
                 }
                 if (--done == 0) return;
@@ -1004,6 +1021,7 @@ private:
     }
 
 public:
+    ///
     this(Rs input)
     {
         this._input = input;
@@ -1011,6 +1029,7 @@ public:
         adjustPosition();
     }
 
+    ///
     @property bool empty()
     {
         foreach (ref r; _input)
@@ -1020,6 +1039,7 @@ public:
         return false;
     }
 
+    ///
     void popFront()
     {
         assert(!empty);
@@ -1036,6 +1056,7 @@ public:
         adjustPosition();
     }
 
+    ///
     @property ElementType front()
     {
         assert(!empty);
@@ -1044,6 +1065,7 @@ public:
 
     static if (allSatisfy!(isForwardRange, Rs))
     {
+        ///
         @property SetIntersection save()
         {
             auto ret = this;
@@ -1152,6 +1174,7 @@ private:
     }
 
 public:
+    ///
     this(R1 r1, R2 r2)
     {
         this.r1 = r1;
@@ -1160,6 +1183,7 @@ public:
         adjustPosition();
     }
 
+    ///
     void popFront()
     {
         assert(!empty);
@@ -1181,16 +1205,18 @@ public:
         adjustPosition();
     }
 
+    ///
     @property auto ref front()
     {
         assert(!empty);
-        bool chooseR1 = r2.empty || !r1.empty && comp(r1.front, r2.front);
+        immutable chooseR1 = r2.empty || !r1.empty && comp(r1.front, r2.front);
         assert(chooseR1 || r1.empty || comp(r2.front, r1.front));
         return chooseR1 ? r1.front : r2.front;
     }
 
     static if (isForwardRange!R1 && isForwardRange!R2)
     {
+        ///
         @property typeof(this) save()
         {
             auto ret = this;
@@ -1200,8 +1226,10 @@ public:
         }
     }
 
+    ///
     ref auto opSlice() { return this; }
 
+    ///
     @property bool empty() { return r1.empty && r2.empty; }
 }
 
@@ -1217,6 +1245,7 @@ setSymmetricDifference(alias less = "a < b", R1, R2)
 @safe unittest
 {
     import std.algorithm.comparison : equal;
+    import std.range.primitives : isForwardRange;
 
     int[] a = [ 1, 2, 4, 5, 7, 9 ];
     int[] b = [ 0, 1, 2, 4, 7, 8 ];
@@ -1239,139 +1268,53 @@ setSymmetricDifference(alias less = "a < b", R1, R2)
     static assert(hasLvalueElements!R2);
 }
 
+// Explicitly undocumented. It will be removed in December 2016. @@@DEPRECATED_2016-12@@@
+deprecated("Please use std.algorithm.sorting.merge to join ranges")
+alias setUnion = merge;
+
+// Explicitly undocumented. It will be removed in December 2016. @@@DEPRECATED_2016-12@@@
+deprecated("Please use std.algorithm.sorting.merge to join ranges")
+alias SetUnion = Merge;
+
+/++
+TODO: once SetUnion got deprecated we can provide the usual definition
+(= merge + filter after uniqs)
+See: https://github.com/dlang/phobos/pull/4249
 /**
 Lazily computes the union of two or more ranges $(D rs). The ranges
-are assumed to be sorted by $(D less). Elements in the output are not
-unique; the length of the output is the sum of the lengths of the
-inputs. (The $(D length) member is offered if all ranges also have
-length.) The element types of all ranges must have a common type.
+are assumed to be sorted by $(D less). Elements in the output are
+unique. The element types of all ranges must have a common type.
 
 Params:
     less = Predicate the given ranges are sorted by.
     rs = The ranges to compute the union for.
 
 Returns:
-    A range containing the union of the given ranges.
+    A range containing the unique union of the given ranges.
+
+See_Also:
+   $(XREF algorithm, sorting, merge)
  */
-struct SetUnion(alias less = "a < b", Rs...) if (allSatisfy!(isInputRange, Rs))
-{
-private:
-    Rs _r;
-    alias comp = binaryFun!(less);
-    uint _crt;
-
-    void adjustPosition(uint candidate = 0)()
-    {
-        static if (candidate == Rs.length)
-        {
-            _crt = _crt.max;
-        }
-        else
-        {
-            if (_r[candidate].empty)
-            {
-                adjustPosition!(candidate + 1)();
-                return;
-            }
-            foreach (i, U; Rs[candidate + 1 .. $])
-            {
-                enum j = candidate + i + 1;
-                if (_r[j].empty) continue;
-                if (comp(_r[j].front, _r[candidate].front))
-                {
-                    // a new candidate was found
-                    adjustPosition!(j)();
-                    return;
-                }
-            }
-            // Found a successful candidate
-            _crt = candidate;
-        }
-    }
-
-public:
-    alias ElementType = CommonType!(staticMap!(.ElementType, Rs));
-    static assert(!is(CommonType!(staticMap!(.ElementType, Rs)) == void),
-        typeof(this).stringof ~ ": incompatible element types.");
-
-    this(Rs rs)
-    {
-        this._r = rs;
-        adjustPosition();
-    }
-
-    @property bool empty()
-    {
-        return _crt == _crt.max;
-    }
-
-    void popFront()
-    {
-        // Assumes _crt is correct
-        assert(!empty);
-        foreach (i, U; Rs)
-        {
-            if (i < _crt) continue;
-            // found _crt
-            assert(!_r[i].empty);
-            _r[i].popFront();
-            adjustPosition();
-            return;
-        }
-        assert(false);
-    }
-
-    @property auto ref ElementType front()
-    {
-        assert(!empty);
-        // Assume _crt is correct
-        foreach (i, U; Rs)
-        {
-            if (i < _crt) continue;
-            assert(!_r[i].empty);
-            return _r[i].front;
-        }
-        assert(false);
-    }
-
-    static if (allSatisfy!(isForwardRange, Rs))
-    {
-        @property auto save()
-        {
-            auto ret = this;
-            foreach (ti, elem; _r)
-            {
-                ret._r[ti] = elem.save;
-            }
-            return ret;
-        }
-    }
-
-    static if (allSatisfy!(hasLength, Rs))
-    {
-        @property size_t length()
-        {
-            size_t result;
-            foreach (i, U; Rs)
-            {
-                result += _r[i].length;
-            }
-            return result;
-        }
-
-        alias opDollar = length;
-    }
-}
-
-/// Ditto
-SetUnion!(less, Rs) setUnion(alias less = "a < b", Rs...)
+auto setUnion(alias less = "a < b", Rs...)
 (Rs rs)
 {
-    return typeof(return)(rs);
+    import std.algorithm.iteration: uniq;
+    import std.algorithm.sorting: merge;
+    return merge!(less, Rs)(rs).uniq;
 }
 
 ///
-@safe unittest
+@safe pure nothrow unittest
+    ///
+{
+    import std.algorithm.comparison : equal;
+
+    int[] a = [1, 3, 5];
+    int[] b = [2, 3, 4];
+    assert(a.setUnion(b).equal([1, 2, 3, 4, 5]));
+}
+
+@safe pure nothrow unittest
 {
     import std.algorithm.comparison : equal;
 
@@ -1379,13 +1322,46 @@ SetUnion!(less, Rs) setUnion(alias less = "a < b", Rs...)
     int[] b = [ 0, 1, 2, 4, 7, 8 ];
     double[] c = [ 10.5 ];
 
-    static assert(isForwardRange!(typeof(setUnion(a, b))));
-    assert(setUnion(a, b).length == a.length + b.length);
-    assert(equal(setUnion(a, b), [0, 1, 1, 2, 2, 4, 4, 5, 7, 7, 8, 9][]));
+    assert(equal(setUnion(a, b), [0, 1, 2, 4, 5, 7, 8, 9][]));
     assert(equal(setUnion(a, c, b),
-                    [0, 1, 1, 2, 2, 4, 4, 5, 7, 7, 8, 9, 10.5][]));
-    auto u = setUnion(a, b);
-    u.front--;
-    assert(equal(u, [-1, 1, 1, 2, 2, 4, 4, 5, 7, 7, 8, 9][]));
+                    [0, 1, 2, 4, 5, 7, 8, 9, 10.5][]));
 }
 
+@safe unittest
+{
+    // save
+    import std.range: dropOne;
+    int[] a = [0, 1, 2];
+    int[] b = [0, 3];
+    auto arr = a.setUnion(b);
+    assert(arr.front == 0);
+    assert(arr.save.dropOne.front == 1);
+    assert(arr.front == 0);
+}
+
+@nogc @safe pure nothrow unittest
+{
+    import std.algorithm.comparison : equal;
+
+    static immutable a = [1, 3, 5];
+    static immutable b = [2, 4];
+    static immutable r = [1, 2, 3, 4, 5];
+    assert(a.setUnion(b).equal(r));
+}
+
+@safe pure nothrow unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.internal.test.dummyrange;
+    import std.range: iota;
+
+    auto dummyResult1 = [1, 1.5, 2, 3, 4, 5, 5.5, 6, 7, 8, 9, 10];
+    auto dummyResult2 = iota(1, 11);
+    foreach (DummyType; AllDummyRanges)
+    {
+        DummyType d;
+        assert(d.setUnion([1, 1.5, 5.5]).equal(dummyResult1));
+        assert(d.setUnion(d).equal(dummyResult2));
+    }
+}
+++/

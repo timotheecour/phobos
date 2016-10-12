@@ -11,9 +11,9 @@
  * $(LI Binary exponentiation)
  * )
  *
- * For very large numbers, consider using the $(WEB gmplib.org, GMP library) instead.
+ * For very large numbers, consider using the $(HTTP gmplib.org, GMP library) instead.
  *
- * License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
+ * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
  * Authors:   Don Clugston
  * Source: $(PHOBOSSRC std/_bigint.d)
  */
@@ -25,9 +25,12 @@
 
 module std.bigint;
 
+import std.conv : ConvException;
+
 private import std.internal.math.biguintcore;
 private import std.format : FormatSpec, FormatException;
 private import std.traits;
+private import std.range.primitives;
 
 /** A struct representing an arbitrary precision integer.
  *
@@ -46,35 +49,97 @@ private:
     BigUint data;     // BigInt adds signed arithmetic to BigUint.
     bool sign = false;
 public:
-    /// Construct a BigInt from a decimal or hexadecimal string.
-    /// The number must be in the form of a D decimal or hex literal:
-    /// It may have a leading + or - sign; followed by "0x" if hexadecimal.
-    /// Underscores are permitted.
-    /// BUG: Should throw a IllegalArgumentException/ConvError if invalid character found
-    this(T : const(char)[] )(T s) pure
+    /**
+     * Construct a BigInt from a decimal or hexadecimal string. The number must
+     * be in the form of a decimal or hex literal. It may have a leading `+`
+     * or `-` sign, followed by `0x` or `0X` if hexadecimal. Underscores are
+     * permitted in any location after the `0x` and/or the sign of the number.
+     *
+     * Params:
+     *     s = a finite bidirectional range of any character type
+     *
+     * Throws:
+     *     $(D ConvException) if the string doesn't represent a valid number
+     */
+    this(Range)(Range s) if (
+        isBidirectionalRange!Range &&
+        isSomeChar!(ElementType!Range) &&
+        !isInfinite!Range)
     {
+        import std.algorithm.iteration : filterBidirectional;
+        import std.algorithm.searching : startsWith;
+        import std.utf : byCodeUnit, byChar;
+        import std.exception : enforce;
+        import std.conv : ConvException;
+
+        enforce!ConvException(!s.empty, "Can't initialize BigInt with an empty range");
+
         bool neg = false;
-        if (s[0] == '-') {
-            neg = true;
-            s = s[1..$];
-        } else if (s[0] == '+') {
-            s = s[1..$];
-        }
-        data = 0UL;
-        auto q = 0X3;
         bool ok;
-        assert(isZero());
-        if (s.length > 2 && (s[0..2] == "0x" || s[0..2] == "0X"))
+
+        data = 0UL;
+
+        // auto decoding special case
+        static if (isNarrowString!Range)
+            auto codeUnits = s.byCodeUnit();
+        else
+            alias codeUnits = s;
+
+        // check for signs and if the string is a hex value
+        if (codeUnits.front == '+')
         {
-            ok = data.fromHexString(s[2..$]);
-        } else {
-            ok = data.fromDecimalString(s);
+            codeUnits.popFront(); // skip '+'
         }
-        assert(ok);
+        else if (codeUnits.front == '-')
+        {
+            neg = true;
+            codeUnits.popFront();
+        }
+
+        if (codeUnits.save.startsWith("0x".byChar) ||
+            codeUnits.save.startsWith("0X".byChar))
+        {
+            codeUnits.popFront;
+            codeUnits.popFront;
+
+            if (!codeUnits.empty)
+                ok = data.fromHexString(codeUnits.filterBidirectional!(a => a != '_'));
+            else
+                ok = false;
+        }
+        else
+        {
+            ok = data.fromDecimalString(codeUnits.filterBidirectional!(a => a != '_'));
+        }
+
+        enforce!ConvException(ok, "Not a valid numerical string");
 
         if (isZero())
             neg = false;
+
         sign = neg;
+    }
+
+    @system unittest
+    {
+        // system because of the dummy ranges eventually call std.array!string
+        import std.internal.test.dummyrange;
+        import std.exception : assertThrown;
+
+        auto r1 = new ReferenceBidirectionalRange!dchar("101");
+        auto big1 = BigInt(r1);
+        assert(big1 == BigInt(101));
+
+        auto r2 = new ReferenceBidirectionalRange!dchar("1_000");
+        auto big2 = BigInt(r2);
+        assert(big2 == BigInt(1000));
+
+        auto r3 = new ReferenceBidirectionalRange!dchar("0x0");
+        auto big3 = BigInt(r3);
+        assert(big3 == BigInt(0));
+
+        auto r4 = new ReferenceBidirectionalRange!dchar("0x");
+        assertThrown!ConvException(BigInt(r4));
     }
 
     /// Construct a BigInt from a built-in integral type.
@@ -85,8 +150,9 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
+        // @system due to failure in FreeBSD32
         ulong data = 1_000_000_000_000;
         auto bigData = BigInt(data);
         assert(data == BigInt("1_000_000_000_000"));
@@ -99,7 +165,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         const(BigInt) b1 = BigInt("1_234_567_890");
         BigInt b2 = BigInt(b1);
@@ -115,7 +181,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto b = BigInt("123");
         b = 456;
@@ -131,7 +197,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto b1 = BigInt("123");
         auto b2 = BigInt("456");
@@ -159,10 +225,13 @@ public:
         }
         else static if (op=="*")
         {
-            if (y == 0) {
+            if (y == 0)
+            {
                 sign = false;
                 data = 0UL;
-            } else {
+            }
+            else
+            {
                 sign = ( sign != (y<0) );
                 data = BigUint.mulInt(data, u);
             }
@@ -228,8 +297,9 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
+        //@system because opOpAssign is @system
         auto b = BigInt("1_000_000_000");
 
         b += 12345;
@@ -289,8 +359,9 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
+        // @system because opOpAssign is @system
         auto x = BigInt("123");
         auto y = BigInt("321");
         x += y;
@@ -310,7 +381,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("123");
         auto y = BigInt("456");
@@ -331,7 +402,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("123");
         x *= 300;
@@ -374,7 +445,7 @@ public:
         }
         else
         {
-            uint u = absUnsign(y);
+            immutable uint u = absUnsign(y);
             int rem = BigUint.modInt(data, u);
             // x%y always has the same sign as x.
             // This is not the same as mathematical mod.
@@ -383,7 +454,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto  x  = BigInt("1_000_000_500");
         long  l  = 1_000_000L;
@@ -408,7 +479,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("100");
         BigInt y = 123 + x;
@@ -452,8 +523,8 @@ public:
             // x%y always has the same sign as x.
             if (data.ulongLength > 1)
                 return x;
-            ulong u = absUnsign(x);
-            ulong rem = u % data.peekUlong(0);
+            immutable u = absUnsign(x);
+            immutable rem = u % data.peekUlong(0);
             // x%y always has the same sign as x.
             return cast(T)((x<0) ? -rem : rem);
         }
@@ -502,7 +573,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("1234");
         assert(-x == BigInt("-1234"));
@@ -529,7 +600,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("12345");
         auto y = BigInt("12340");
@@ -552,7 +623,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         // Non-zero values are regarded as true
         auto x = BigInt("1");
@@ -568,7 +639,7 @@ public:
     /**
         Implements casting to integer types.
 
-        Throws: $(XREF conv,ConvOverflowException) if the number exceeds
+        Throws: $(REF ConvOverflowException, std,conv) if the number exceeds
         the target type's range.
      */
     T opCast(T:ulong)() /*pure*/ const
@@ -599,7 +670,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         import std.conv : to, ConvOverflowException;
         import std.exception : assertThrown;
@@ -612,7 +683,7 @@ public:
         assertThrown!ConvOverflowException(BigInt("-1").to!ubyte);
     }
 
-    unittest
+    @system unittest
     {
         import std.conv : to, ConvOverflowException;
         import std.exception : assertThrown;
@@ -652,12 +723,14 @@ public:
         Warning: Casting to/from $(D const) or $(D immutable) may break type
         system guarantees. Use with care.
      */
-    T opCast(T)() pure nothrow @nogc const if (is(Unqual!T == BigInt)) {
+    T opCast(T)() pure nothrow @nogc const
+    if (is(Unqual!T == BigInt))
+    {
         return this;
     }
 
     ///
-    unittest
+    @system unittest
     {
         const(BigInt) x = BigInt("123");
         BigInt y = cast() x;    // cast away const
@@ -690,12 +763,12 @@ public:
     {
         if (sign!=y.sign)
             return sign ? -1 : 1;
-        int cmp = data.opCmp(y.data);
+        immutable cmp = data.opCmp(y.data);
         return sign? -cmp: cmp;
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto x = BigInt("100");
         auto y = BigInt("10");
@@ -721,7 +794,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto b = BigInt("12345");
         long l = b.toLong();
@@ -741,7 +814,7 @@ public:
     }
 
     ///
-    unittest
+    @system unittest
     {
         auto big = BigInt("5_000_000");
         auto i = big.toInt();
@@ -776,6 +849,7 @@ public:
      *
      * $(TABLE  Available output formats:,
      * $(TR $(TD "d") $(TD  Decimal))
+     * $(TR $(TD "o") $(TD  Octal))
      * $(TR $(TD "x") $(TD  Hexadecimal, lower case))
      * $(TR $(TD "X") $(TD  Hexadecimal, upper case))
      * $(TR $(TD "s") $(TD  Default formatting (same as "d") ))
@@ -792,8 +866,8 @@ public:
     /// ditto
     void toString(scope void delegate(const(char)[]) sink, ref FormatSpec!char f) const
     {
-        auto hex = (f.spec == 'x' || f.spec == 'X');
-        if (!(f.spec == 's' || f.spec == 'd' || hex))
+        immutable hex = (f.spec == 'x' || f.spec == 'X');
+        if (!(f.spec == 's' || f.spec == 'd' || f.spec =='o' || hex))
             throw new FormatException("Format specifier not understood: %" ~ f.spec);
 
         char[] buff;
@@ -804,6 +878,10 @@ public:
         else if (f.spec == 'x')
         {
             buff = data.toHexString(0, '_', 0, f.flZero ? '0' : ' ', LetterCase.lower);
+        }
+        else if (f.spec == 'o')
+        {
+            buff = data.toOctalString();
         }
         else
         {
@@ -828,8 +906,8 @@ public:
             }
         }
 
-        auto maxw = minw < f.width ? f.width : minw;
-        auto difw = maxw - minw;
+        immutable maxw = minw < f.width ? f.width : minw;
+        immutable difw = maxw - minw;
 
         if (!f.flDash && !f.flZero)
             foreach (i; 0 .. difw)
@@ -851,9 +929,9 @@ public:
 
     /**
         $(D toString) is rarely directly invoked; the usual way of using it is via
-        $(LINK2 std_format.html#format, std.format.format):
+        $(REF format, std, format):
      */
-    unittest
+    @system unittest
     {
         import std.format : format;
 
@@ -863,6 +941,7 @@ public:
         assert(format("%d", x) == "12345000000");
         assert(format("%x", x) == "2_dfd1c040");
         assert(format("%X", x) == "2_DFD1C040");
+        assert(format("%o", x) == "133764340100");
     }
 
     // Implement toHash so that BigInt works properly as an AA key.
@@ -879,7 +958,7 @@ public:
         $(D toHash) is rarely directly invoked; it is implicitly used when
         BigInt is used as the key of an associative array.
      */
-    unittest
+    @safe unittest
     {
         string[BigInt] aa;
         aa[BigInt(123)] = "abc";
@@ -913,7 +992,7 @@ private:
 }
 
 ///
-unittest
+@system unittest
 {
     BigInt a = "9588669891916142";
     BigInt b = "7452469135154800";
@@ -959,7 +1038,7 @@ string toDecimalString(const(BigInt) x)
 }
 
 ///
-unittest
+@system unittest
 {
     auto x = BigInt("123");
     x *= 1000;
@@ -987,7 +1066,7 @@ string toHex(const(BigInt) x)
 }
 
 ///
-unittest
+@system unittest
 {
     auto x = BigInt("123");
     x *= 1000;
@@ -1011,7 +1090,7 @@ Unsigned!T absUnsign(T)(T x) if (isIntegral!T)
 {
     static if (isSigned!T)
     {
-        import std.conv;
+        import std.conv : unsigned;
         /* This returns the correct result even when x = T.min
          * on two's complement machines because unsigned(T.min) = |T.min|
          * even though -T.min = T.min.
@@ -1024,24 +1103,27 @@ Unsigned!T absUnsign(T)(T x) if (isIntegral!T)
     }
 }
 
-nothrow pure
-unittest {
+nothrow pure @system
+unittest
+{
     BigInt a, b;
     a = 1;
     b = 2;
     auto c = a + b;
 }
 
-nothrow pure
-unittest {
+nothrow pure @system
+unittest
+{
     long a;
     BigInt b;
     auto c = a + b;
     auto d = b + a;
 }
 
-nothrow pure
-unittest {
+nothrow pure @system
+unittest
+{
     BigInt x = 1, y = 2;
     assert(x <  y);
     assert(x <= y);
@@ -1064,7 +1146,8 @@ unittest {
     assert(incr == BigInt(1));
 }
 
-unittest {
+@system unittest
+{
     // Radix conversion
     assert( toDecimalString(BigInt("-1_234_567_890_123_456_789"))
         == "-1234567890123456789");
@@ -1096,9 +1179,12 @@ unittest {
     assert(BigInt(-4) % BigInt(5) == -4);
     assert(BigInt(2)/BigInt(-3) == BigInt(0)); // bug 8022
     assert(BigInt("-1") > long.min); // bug 9548
+
+    assert(toDecimalString(BigInt("0000000000000000000000000000000000000000001234567"))
+        == "1234567");
 }
 
-unittest // Minimum signed value bug tests.
+@system unittest // Minimum signed value bug tests.
 {
     assert(BigInt("-0x8000000000000000") == BigInt(long.min));
     assert(BigInt("-0x8000000000000000")+1 > BigInt(long.min));
@@ -1119,7 +1205,7 @@ unittest // Minimum signed value bug tests.
     assert((BigInt(int.min)-1)%int.min == -1);
 }
 
-unittest // Recursive division, bug 5568
+@system unittest // Recursive division, bug 5568
 {
     enum Z = 4843;
     BigInt m = (BigInt(1) << (Z*8) ) - 1;
@@ -1165,7 +1251,7 @@ unittest // Recursive division, bug 5568
     a8165[0] = a8165[1] = 1;
 }
 
-unittest
+@system unittest
 {
     import std.array;
     import std.format;
@@ -1216,7 +1302,7 @@ unittest
     }
 }
 
-unittest
+@system unittest
 {
     import std.array;
     import std.format;
@@ -1267,7 +1353,7 @@ unittest
     }
 }
 
-unittest
+@system unittest
 {
     import std.array;
     import std.format;
@@ -1319,7 +1405,7 @@ unittest
 }
 
 // 6448
-unittest
+@system unittest
 {
     import std.array;
     import std.format;
@@ -1345,9 +1431,9 @@ unittest
     assert(y.toLong() == -2);
 }
 
-unittest
+@safe unittest
 {
-    import std.math:abs;
+    import std.math : abs;
     auto r = abs(BigInt(-1000)); // 6486
     assert(r == 1000);
 
@@ -1361,7 +1447,7 @@ unittest
     assert(one && !zero);
 }
 
-unittest // 6850
+@system unittest // 6850
 {
     pure long pureTest() {
         BigInt a = 1;
@@ -1373,7 +1459,7 @@ unittest // 6850
     assert(pureTest() == 1337);
 }
 
-unittest // 8435 & 10118
+@system unittest // 8435 & 10118
 {
     auto i = BigInt(100);
     auto j = BigInt(100);
@@ -1397,7 +1483,7 @@ unittest // 8435 & 10118
     assert(keys.empty);
 }
 
-unittest // 11148
+@system unittest // 11148
 {
     void foo(BigInt) {}
     const BigInt cbi = 3;
@@ -1434,13 +1520,13 @@ unittest // 11148
     n *= 2;
 }
 
-unittest // 8167
+@safe unittest // 8167
 {
     BigInt a = BigInt(3);
     BigInt b = BigInt(a);
 }
 
-unittest // 9061
+@safe unittest // 9061
 {
     long l1 = 0x12345678_90ABCDEF;
     long l2 = 0xFEDCBA09_87654321;
@@ -1459,7 +1545,7 @@ unittest // 9061
     assert(l5 == b5);
 }
 
-unittest // 11600
+@system unittest // 11600
 {
     import std.conv;
     import std.exception : assertThrown;
@@ -1474,13 +1560,13 @@ unittest // 11600
     assertThrown!ConvException(to!BigInt("-123four"));
 }
 
-unittest // 11583
+@safe unittest // 11583
 {
     BigInt x = 0;
     assert((x > 0) == false);
 }
 
-unittest // 13391
+@system unittest // 13391
 {
     BigInt x1 = "123456789";
     BigInt x2 = "123456789123456789";
@@ -1511,11 +1597,11 @@ unittest // 13391
     assert(x2 == 1);
 }
 
-unittest // 13963
+@system unittest // 13963
 {
     BigInt x = 1;
     import std.meta : AliasSeq;
-    foreach(Int; AliasSeq!(byte, ubyte, short, ushort, int, uint))
+    foreach (Int; AliasSeq!(byte, ubyte, short, ushort, int, uint))
     {
         assert(is(typeof(x % Int(1)) == int));
     }
@@ -1553,7 +1639,7 @@ unittest // 13963
     assert(-x2 % ulong.max == -x2);
 }
 
-unittest // 14124
+@system unittest // 14124
 {
     auto x = BigInt(-3);
     x %= 3;
@@ -1575,3 +1661,29 @@ unittest // 14124
     assert(!x.isNegative());
     assert(x.isZero());
 }
+
+// issue 15678
+@system unittest
+{
+    import std.exception : assertThrown;
+    assertThrown!ConvException(BigInt(""));
+    assertThrown!ConvException(BigInt("0x1234BARF"));
+    assertThrown!ConvException(BigInt("1234PUKE"));
+}
+
+// Issue 6447
+unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.range : iota;
+
+    auto s = BigInt(1_000_000_000_000);
+    auto e = BigInt(1_000_000_000_003);
+    auto r = iota(s, e);
+    assert(r.equal([
+        BigInt(1_000_000_000_000),
+        BigInt(1_000_000_000_001),
+        BigInt(1_000_000_000_002)
+    ]));
+}
+

@@ -1,28 +1,53 @@
 /**
 This module implements a singly-linked list container.
+It can be used as a stack.
 
-This module is a submodule of $(LINK2 std_container.html, std.container).
+This module is a submodule of $(MREF std, container).
 
 Source: $(PHOBOSSRC std/container/_slist.d)
-Macros:
-WIKI = Phobos/StdContainer
-TEXTWITHCOMMAS = $0
 
-Copyright: Red-black tree code copyright (C) 2008- by Steven Schveighoffer. Other code
-copyright 2010- Andrei Alexandrescu. All rights reserved by the respective holders.
+Copyright: 2010- Andrei Alexandrescu. All rights reserved by the respective holders.
 
 License: Distributed under the Boost Software License, Version 1.0.
-(See accompanying file LICENSE_1_0.txt or copy at $(WEB
+(See accompanying file LICENSE_1_0.txt or copy at $(HTTP
 boost.org/LICENSE_1_0.txt)).
 
-Authors: Steven Schveighoffer, $(WEB erdani.com, Andrei Alexandrescu)
+Authors: $(HTTP erdani.com, Andrei Alexandrescu)
 */
 module std.container.slist;
+
+///
+unittest
+{
+    import std.container : SList;
+    import std.algorithm.comparison : equal;
+
+    auto s = SList!int(1, 2, 3);
+    assert(equal(s[], [1, 2, 3]));
+
+    s.removeFront();
+    assert(equal(s[], [2, 3]));
+
+    s.insertFront([5, 6]);
+    assert(equal(s[], [5, 6, 2, 3]));
+
+    // If you want to apply range operations, simply slice it.
+    import std.algorithm.searching : countUntil;
+    import std.range : popFrontN, walkLength;
+
+    auto sl = SList!int(1, 2, 3, 4, 5);
+    assert(countUntil(sl[], 2) == 1);
+
+    auto r = sl[];
+    popFrontN(r, 2);
+    assert(walkLength(r) == 3);
+}
 
 public import std.container.util;
 
 /**
    Implements a simple and fast singly-linked list.
+   It can be used as a stack.
 
    $(D SList) uses reference semantics.
  */
@@ -30,8 +55,8 @@ struct SList(T)
 {
     import std.exception : enforce;
     import std.range : Take;
-    import std.range.primitives;
-    import std.traits;
+    import std.range.primitives : isInputRange, isForwardRange, ElementType;
+    import std.traits : isImplicitlyConvertible;
 
     private struct Node
     {
@@ -172,7 +197,7 @@ Defines the container's primary range, which embodies a forward range.
 
         T moveFront()
         {
-            import std.algorithm : move;
+            import std.algorithm.mutation : move;
 
             assert(!empty, "SList.Range.moveFront: Range is empty");
             return move(_head._payload);
@@ -280,7 +305,29 @@ Complexity: $(BIGOH 1)
      */
     void clear()
     {
-        _first = null;
+        if (_root)
+            _first = null;
+    }
+
+/**
+Reverses SList in-place. Performs no memory allocation.
+
+Complexity: $(BIGOH n)
+     */
+    void reverse()
+    {
+        if (!empty)
+        {
+            Node* prev;
+            while (_first)
+            {
+                auto next = _first._next;
+                _first._next = prev;
+                prev = _first;
+                _first = next;
+            }
+            _first = prev;
+        }
     }
 
 /**
@@ -345,7 +392,7 @@ Complexity: $(BIGOH 1).
      */
     T removeAny()
     {
-        import std.algorithm : move;
+        import std.algorithm.mutation : move;
 
         assert(!empty, "SList.removeAny: List is empty");
         auto result = move(_first._payload);
@@ -544,7 +591,7 @@ Complexity: $(BIGOH n)
 
 unittest
 {
-    import std.algorithm : equal;
+    import std.algorithm.comparison : equal;
 
     auto a = SList!int(5);
     auto b = a;
@@ -644,7 +691,7 @@ unittest
 
 unittest
 {
-    import std.algorithm : equal;
+    import std.algorithm.comparison : equal;
 
     auto s = SList!int(1, 2, 3);
     s.removeFront();
@@ -678,14 +725,15 @@ unittest
 
 unittest
 {
-    import std.algorithm;
+    import std.algorithm.comparison : equal;
+    import std.range : take;
 
     // insertAfter documentation example
     auto sl = SList!string(["a", "b", "d"]);
     sl.insertAfter(sl[], "e"); // insert at the end (slowest)
-    assert(std.algorithm.equal(sl[], ["a", "b", "d", "e"]));
-    sl.insertAfter(std.range.take(sl[], 2), "c"); // insert after "b"
-    assert(std.algorithm.equal(sl[], ["a", "b", "c", "d", "e"]));
+    assert(equal(sl[], ["a", "b", "d", "e"]));
+    sl.insertAfter(take(sl[], 2), "c"); // insert after "b"
+    assert(equal(sl[], ["a", "b", "c", "d", "e"]));
 }
 
 unittest
@@ -710,7 +758,7 @@ unittest
 
 unittest
 {
-    import std.algorithm : equal;
+    import std.algorithm.comparison : equal;
     import std.range;
 
     auto s = SList!int(1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
@@ -769,4 +817,28 @@ unittest
     SList!int s;
     s.insertAfter(s[], 1);
     assert(s.front == 1);
+}
+
+unittest
+{
+    // issue 15659
+    SList!int s;
+    s.clear();
+}
+
+unittest
+{
+    SList!int s;
+    s.reverse();
+}
+
+unittest
+{
+    import std.algorithm.comparison : equal;
+
+    auto s = SList!int([1, 2, 3]);
+    assert(s[].equal([1, 2, 3]));
+
+    s.reverse();
+    assert(s[].equal([3, 2, 1]));
 }

@@ -36,12 +36,10 @@
 /**
  * Socket primitives.
  * Example: See $(SAMPLESRC listener.d) and $(SAMPLESRC htmlget.d)
- * License: $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
- * Authors: Christopher E. Miller, $(WEB klickverbot.at, David Nadlinger),
- *      $(WEB thecybershadow.net, Vladimir Panteleev)
+ * License: $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
+ * Authors: Christopher E. Miller, $(HTTP klickverbot.at, David Nadlinger),
+ *      $(HTTP thecybershadow.net, Vladimir Panteleev)
  * Source:  $(PHOBOSSRC std/_socket.d)
- * Macros:
- *      WIKI=Phobos/StdSocket
  */
 
 module std.socket;
@@ -50,7 +48,7 @@ import core.stdc.stdint, core.stdc.string, std.string, core.stdc.stdlib, std.con
 
 import core.stdc.config;
 import core.time : dur, Duration;
-import std.exception : assumeUnique, enforce, collectException;
+import std.exception;
 
 import std.internal.cstring;
 
@@ -145,17 +143,7 @@ version(unittest)
 /// Base exception thrown by $(D std.socket).
 class SocketException: Exception
 {
-    ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) pure nothrow
-    {
-        super(msg, file, line, next);
-    }
-
-    ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__) pure nothrow
-    {
-        super(msg, next, file, line);
-    }
+    mixin basicExceptionCtors;
 }
 
 
@@ -189,6 +177,14 @@ string formatSocketError(int err) @trusted
             else
                 return "Socket error " ~ to!string(err);
         }
+        else version (NetBSD)
+        {
+            auto errs = strerror_r(err, buf.ptr, buf.length);
+            if (errs == 0)
+                cs = buf.ptr;
+            else
+                return "Socket error " ~ to!string(err);
+        }
         else version (Solaris)
         {
             auto errs = strerror_r(err, buf.ptr, buf.length);
@@ -210,9 +206,9 @@ string formatSocketError(int err) @trusted
 
         auto len = strlen(cs);
 
-        if(cs[len - 1] == '\n')
+        if (cs[len - 1] == '\n')
             len--;
-        if(cs[len - 1] == '\r')
+        if (cs[len - 1] == '\r')
             len--;
         return cs[0 .. len].idup;
     }
@@ -279,34 +275,14 @@ class SocketOSException: SocketException
 /// Socket exceptions representing invalid parameters specified by user code.
 class SocketParameterException: SocketException
 {
-    ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) pure nothrow
-    {
-        super(msg, file, line, next);
-    }
-
-    ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__) pure nothrow
-    {
-        super(msg, next, file, line);
-    }
+    mixin basicExceptionCtors;
 }
 
 /// Socket exceptions representing attempts to use network capabilities not
 /// available on the current system.
 class SocketFeatureException: SocketException
 {
-    ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null) pure nothrow
-    {
-        super(msg, file, line, next);
-    }
-
-    ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__) pure nothrow
-    {
-        super(msg, next, file, line);
-    }
+    mixin basicExceptionCtors;
 }
 
 
@@ -340,7 +316,7 @@ shared static this() @system
         // The version is just a request.
         int val;
         val = WSAStartup(0x2020, &wd);
-        if(val)         // Request Winsock 2.2 for IPv6.
+        if (val)         // Request Winsock 2.2 for IPv6.
             throw new SocketOSException("Unable to initialize socket library", val);
 
         // These functions may not be present on older Windows versions.
@@ -428,7 +404,7 @@ enum ProtocolType: int
  * if (proto.getProtocolByType(ProtocolType.TCP))
  * {
  *     writefln("  Name: %s", proto.name);
- *     foreach(string s; proto.aliases)
+ *     foreach (string s; proto.aliases)
  *          writefln("  Alias: %s", s);
  * }
  * else
@@ -449,16 +425,16 @@ class Protocol
         name = to!string(proto.p_name);
 
         int i;
-        for(i = 0;; i++)
+        for (i = 0;; i++)
         {
-            if(!proto.p_aliases[i])
+            if (!proto.p_aliases[i])
                 break;
         }
 
-        if(i)
+        if (i)
         {
             aliases = new string[i];
-            for(i = 0; i != aliases.length; i++)
+            for (i = 0; i != aliases.length; i++)
             {
                 aliases[i] =
                     to!string(proto.p_aliases[i]);
@@ -475,7 +451,7 @@ class Protocol
     {
         protoent* proto;
         proto = getprotobyname(name.tempCString());
-        if(!proto)
+        if (!proto)
             return false;
         populate(proto);
         return true;
@@ -488,7 +464,7 @@ class Protocol
     {
         protoent* proto;
         proto = getprotobynumber(type);
-        if(!proto)
+        if (!proto)
             return false;
         populate(proto);
         return true;
@@ -496,15 +472,17 @@ class Protocol
 }
 
 
-unittest
+// Skip this test on Android because getprotobyname/number are
+// unimplemented in bionic.
+version(CRuntime_Bionic) {} else
+@safe unittest
 {
-    // getprotobyname,number are unimplemented in bionic
     softUnittest({
         Protocol proto = new Protocol;
         assert(proto.getProtocolByType(ProtocolType.TCP));
         //writeln("About protocol TCP:");
         //writefln("\tName: %s", proto.name);
-        // foreach(string s; proto.aliases)
+        // foreach (string s; proto.aliases)
         // {
         //      writefln("\tAlias: %s", s);
         // }
@@ -549,16 +527,16 @@ class Service
         protocolName = to!string(serv.s_proto);
 
         int i;
-        for(i = 0;; i++)
+        for (i = 0;; i++)
         {
-            if(!serv.s_aliases[i])
+            if (!serv.s_aliases[i])
                 break;
         }
 
-        if(i)
+        if (i)
         {
             aliases = new string[i];
-            for(i = 0; i != aliases.length; i++)
+            for (i = 0; i != aliases.length; i++)
             {
                 aliases[i] =
                     to!string(serv.s_aliases[i]);
@@ -578,7 +556,7 @@ class Service
     {
         servent* serv;
         serv = getservbyname(name.tempCString(), protocolName.tempCString());
-        if(!serv)
+        if (!serv)
             return false;
         populate(serv);
         return true;
@@ -590,7 +568,7 @@ class Service
     {
         servent* serv;
         serv = getservbyport(port, protocolName.tempCString());
-        if(!serv)
+        if (!serv)
             return false;
         populate(serv);
         return true;
@@ -598,17 +576,17 @@ class Service
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         Service serv = new Service;
-        if(serv.getServiceByName("epmap", "tcp"))
+        if (serv.getServiceByName("epmap", "tcp"))
         {
             // writefln("About service epmap:");
             // writefln("\tService: %s", serv.name);
             // writefln("\tPort: %d", serv.port);
             // writefln("\tProtocol: %s", serv.protocolName);
-            // foreach(string s; serv.aliases)
+            // foreach (string s; serv.aliases)
             // {
             //      writefln("\tAlias: %s", s);
             // }
@@ -625,28 +603,37 @@ unittest
 }
 
 
-/**
- * Class for exceptions thrown from an $(D InternetHost).
- */
-class HostException: SocketOSException
+private mixin template socketOSExceptionCtors()
 {
     ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
+    this(string msg, string file = __FILE__, size_t line = __LINE__,
+         Throwable next = null, int err = _lasterr())
     {
         super(msg, file, line, next, err);
     }
 
     ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
+    this(string msg, Throwable next, string file = __FILE__,
+         size_t line = __LINE__, int err = _lasterr())
     {
         super(msg, next, file, line, err);
     }
 
     ///
-    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    this(string msg, int err, string file = __FILE__, size_t line = __LINE__,
+         Throwable next = null)
     {
         super(msg, next, file, line, err);
     }
+}
+
+
+/**
+ * Class for exceptions thrown from an $(D InternetHost).
+ */
+class HostException: SocketOSException
+{
+    mixin socketOSExceptionCtors;
 }
 
 /**
@@ -695,7 +682,7 @@ class InternetHost
 
     void validHostent(in hostent* he)
     {
-        if(he.h_addrtype != cast(int)AddressFamily.INET || he.h_length != 4)
+        if (he.h_addrtype != cast(int)AddressFamily.INET || he.h_length != 4)
             throw new HostException("Address family mismatch");
     }
 
@@ -707,17 +694,17 @@ class InternetHost
 
         name = to!string(he.h_name);
 
-        for(i = 0;; i++)
+        for (i = 0;; i++)
         {
             p = he.h_aliases[i];
-            if(!p)
+            if (!p)
                 break;
         }
 
-        if(i)
+        if (i)
         {
             aliases = new string[i];
-            for(i = 0; i != aliases.length; i++)
+            for (i = 0; i != aliases.length; i++)
             {
                 aliases[i] =
                     to!string(he.h_aliases[i]);
@@ -728,17 +715,17 @@ class InternetHost
             aliases = null;
         }
 
-        for(i = 0;; i++)
+        for (i = 0;; i++)
         {
             p = he.h_addr_list[i];
-            if(!p)
+            if (!p)
                 break;
         }
 
-        if(i)
+        if (i)
         {
             addrList = new uint[i];
-            for(i = 0; i != addrList.length; i++)
+            for (i = 0; i != addrList.length; i++)
             {
                 addrList[i] = ntohl(*(cast(uint*)he.h_addr_list[i]));
             }
@@ -838,7 +825,7 @@ class InternetHost
 }
 
 
-unittest
+@safe unittest
 {
     InternetHost ih = new InternetHost;
 
@@ -857,7 +844,7 @@ unittest
                ih.name);
         // writefln("IP address = %s", ia.toAddrString());
         // writefln("name = %s", ih.name);
-        // foreach(int i, string s; ih.aliases)
+        // foreach (int i, string s; ih.aliases)
         // {
         //      writefln("aliases[%d] = %s", i, s);
         // }
@@ -865,7 +852,7 @@ unittest
 
         //assert(ih.getHostByAddr(ih.addrList[0]));
         // writefln("name = %s", ih.name);
-        // foreach(int i, string s; ih.aliases)
+        // foreach (int i, string s; ih.aliases)
         // {
         //      writefln("aliases[%d] = %s", i, s);
         // }
@@ -966,7 +953,7 @@ private string formatGaiError(int err) @trusted
  *     AddressFamily.INET6);
  * ---
  */
-AddressInfo[] getAddressInfo(T...)(in char[] node, T options) @trusted
+AddressInfo[] getAddressInfo(T...)(in char[] node, T options)
 {
     const(char)[] service = null;
     addrinfo hints;
@@ -992,7 +979,23 @@ AddressInfo[] getAddressInfo(T...)(in char[] node, T options) @trusted
             static assert(0, "Unknown getAddressInfo option type: " ~ typeof(option).stringof);
     }
 
-    return getAddressInfoImpl(node, service, &hints);
+    return () @trusted { return getAddressInfoImpl(node, service, &hints); }();
+}
+
+@system unittest
+{
+    struct Oops
+    {
+        const(char[]) breakSafety()
+        {
+            *cast(int*) 0xcafebabe = 0xdeadbeef;
+            return null;
+        }
+        alias breakSafety this;
+    }
+    assert(!__traits(compiles, () {
+        getAddressInfo("", Oops.init);
+    }), "getAddressInfo breaks @safe");
 }
 
 private AddressInfo[] getAddressInfoImpl(in char[] node, in char[] service, addrinfo* hints) @system
@@ -1030,7 +1033,7 @@ private AddressInfo[] getAddressInfoImpl(in char[] node, in char[] service, addr
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         if (getaddrinfoPointer)
@@ -1144,7 +1147,7 @@ Address[] getAddress(in char[] hostname, ushort port)
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         auto addresses = getAddress("63.105.9.61");
@@ -1224,7 +1227,7 @@ Address parseAddress(in char[] hostaddr, ushort port)
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         auto address = parseAddress("63.105.9.61");
@@ -1251,23 +1254,7 @@ unittest
  */
 class AddressException: SocketOSException
 {
-    ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
-    {
-        super(msg, file, line, next, err);
-    }
-
-    ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
-    {
-        super(msg, next, file, line, err);
-    }
-
-    ///
-    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
-    {
-        super(msg, next, file, line, err);
-    }
+    mixin socketOSExceptionCtors;
 }
 
 
@@ -1574,10 +1561,10 @@ public:
     this(in char[] addr, ushort port)
     {
         uint uiaddr = parse(addr);
-        if(ADDR_NONE == uiaddr)
+        if (ADDR_NONE == uiaddr)
         {
             InternetHost ih = new InternetHost;
-            if(!ih.getHostByName(addr))
+            if (!ih.getHostByName(addr))
                 //throw new AddressException("Invalid internet address");
                 throw new AddressException(
                           text("Unable to resolve host '", addr, "'"));
@@ -1707,7 +1694,7 @@ public:
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         const InternetAddress ia = new InternetAddress("63.105.9.61", 80);
@@ -1914,7 +1901,7 @@ public:
 }
 
 
-unittest
+@safe unittest
 {
     softUnittest({
         const Internet6Address ia = new Internet6Address("::1", 80);
@@ -2037,15 +2024,15 @@ static if (is(sockaddr_un))
         }
     }
 
-    unittest
+    @safe unittest
     {
         import core.stdc.stdio : remove;
-        import std.file: deleteme;
+        import std.file : deleteme;
 
         immutable ubyte[] data = [1, 2, 3, 4];
         Socket[2] pair;
 
-        auto name = std.file.deleteme ~ "-unix-socket";
+        auto name = deleteme ~ "-unix-socket";
         auto address = new UnixAddress(name);
 
         auto listener = new Socket(AddressFamily.UNIX, SocketType.STREAM);
@@ -2080,23 +2067,7 @@ static if (is(sockaddr_un))
  */
 class SocketAcceptException: SocketOSException
 {
-    ///
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null, int err = _lasterr())
-    {
-        super(msg, file, line, next, err);
-    }
-
-    ///
-    this(string msg, Throwable next, string file = __FILE__, size_t line = __LINE__, int err = _lasterr())
-    {
-        super(msg, next, file, line, err);
-    }
-
-    ///
-    this(string msg, int err, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
-    {
-        super(msg, next, file, line, err);
-    }
+    mixin socketOSExceptionCtors;
 }
 
 /// How a socket is shutdown:
@@ -2330,7 +2301,7 @@ public:
     {
         version (Windows)
         {
-            import std.algorithm : countUntil;
+            import std.algorithm.searching : countUntil;
             auto fds = fds;
             auto p = fds.countUntil(s);
             if (p >= 0)
@@ -2358,7 +2329,7 @@ public:
     {
         version (Windows)
         {
-            import std.algorithm;
+            import std.algorithm.searching : canFind;
             return fds.canFind(s) ? 1 : 0;
         }
         else
@@ -2409,7 +2380,7 @@ public:
     }
 }
 
-unittest
+@safe unittest
 {
     auto fds = cast(socket_t[])
         [cast(socket_t)1, 2, 0, 1024, 17, 42, 1234, 77, 77+32, 77+64];
@@ -2431,7 +2402,7 @@ unittest
     }
 }
 
-unittest
+@safe unittest
 {
     softUnittest({
         enum PAIRS = 768;
@@ -2506,7 +2477,7 @@ unittest
     });
 }
 
-unittest // Issue 14012, 14013
+@safe unittest // Issue 14012, 14013
 {
     auto set = new SocketSet(1);
     assert(set.max >= 0);
@@ -2607,11 +2578,12 @@ private:
     // behavior.
     enum WINSOCK_TIMEOUT_SKEW = 500;
 
-    unittest
+    @safe unittest
     {
         version(SlowTests)
         softUnittest({
             import std.datetime;
+            import std.typecons;
 
             enum msecs = 1000;
             auto pair = socketPair();
@@ -2619,7 +2591,7 @@ private:
             sock.setOption(SocketOptionLevel.SOCKET,
                 SocketOption.RCVTIMEO, dur!"msecs"(msecs));
 
-            auto sw = StopWatch(AutoStart.yes);
+            auto sw = StopWatch(Yes.autoStart);
             ubyte[1] buf;
             sock.receive(buf);
             sw.stop();
@@ -2663,7 +2635,7 @@ public:
     {
         _family = af;
         auto handle = cast(socket_t) socket(af, type, protocol);
-        if(handle == socket_t.init)
+        if (handle == socket_t.init)
             throw new SocketOSException("Unable to create socket");
         setSock(handle);
     }
@@ -2683,7 +2655,7 @@ public:
     {
         protoent* proto;
         proto = getprotobyname(protocolName.tempCString());
-        if(!proto)
+        if (!proto)
             throw new SocketOSException("Unable to find the protocol");
         this(af, type, cast(ProtocolType)proto.p_proto);
     }
@@ -2744,20 +2716,20 @@ public:
         version(Windows)
         {
             uint num = !byes;
-            if(_SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &num))
+            if (_SOCKET_ERROR == ioctlsocket(sock, FIONBIO, &num))
                 goto err;
             _blocking = byes;
         }
         else version(Posix)
         {
             int x = fcntl(sock, F_GETFL, 0);
-            if(-1 == x)
+            if (-1 == x)
                 goto err;
-            if(byes)
+            if (byes)
                 x &= ~O_NONBLOCK;
             else
                 x |= O_NONBLOCK;
-            if(-1 == fcntl(sock, F_SETFL, x))
+            if (-1 == fcntl(sock, F_SETFL, x))
                 goto err;
         }
         return;         // Success.
@@ -2768,13 +2740,13 @@ public:
 
 
     /// Get the socket's address family.
-    @property AddressFamily addressFamily()
+    @property AddressFamily addressFamily() const pure nothrow @nogc
     {
         return _family;
     }
 
     /// Property that indicates if this is a valid, alive socket.
-    @property bool isAlive() @trusted const
+    @property bool isAlive() @trusted const nothrow @nogc
     {
         int type;
         socklen_t typesize = cast(socklen_t) type.sizeof;
@@ -2782,9 +2754,9 @@ public:
     }
 
     /// Associate a local address with this socket.
-    void bind(Address addr) @trusted
+    void bind(Address addr) @trusted const
     {
-        if(_SOCKET_ERROR == .bind(sock, addr.name, addr.nameLen))
+        if (_SOCKET_ERROR == .bind(sock, addr.name, addr.nameLen))
             throw new SocketOSException("Unable to bind socket");
     }
 
@@ -2793,23 +2765,23 @@ public:
      * the connection to be made. If the socket is nonblocking, connect
      * returns immediately and the connection attempt is still in progress.
      */
-    void connect(Address to) @trusted
+    void connect(Address to) @trusted const
     {
-        if(_SOCKET_ERROR == .connect(sock, to.name, to.nameLen))
+        if (_SOCKET_ERROR == .connect(sock, to.name, to.nameLen))
         {
             int err;
             err = _lasterr();
 
-            if(!blocking)
+            if (!blocking)
             {
                 version(Windows)
                 {
-                    if(WSAEWOULDBLOCK == err)
+                    if (WSAEWOULDBLOCK == err)
                         return;
                 }
                 else version(Posix)
                 {
-                    if(EINPROGRESS == err)
+                    if (EINPROGRESS == err)
                         return;
                 }
                 else
@@ -2826,9 +2798,9 @@ public:
      * can $(D listen). The $(D backlog) is a request of how many pending
      * incoming connections are queued until $(D accept)ed.
      */
-    void listen(int backlog) @trusted
+    void listen(int backlog) @trusted const
     {
-        if(_SOCKET_ERROR == .listen(sock, backlog))
+        if (_SOCKET_ERROR == .listen(sock, backlog))
             throw new SocketOSException("Unable to listen on socket");
     }
 
@@ -2841,7 +2813,7 @@ public:
      */
     // Override to use a derived class.
     // The returned socket's handle must not be set.
-    protected Socket accepting() pure nothrow
+    protected Socket accepting() const pure nothrow
     {
         return new Socket;
     }
@@ -2851,10 +2823,10 @@ public:
      * waits for a connection request. Throws $(D SocketAcceptException) if
      * unable to _accept. See $(D accepting) for use with derived classes.
      */
-    Socket accept() @trusted
+    Socket accept() const @trusted
     {
         auto newsock = cast(socket_t).accept(sock, null, null);
-        if(socket_t.init == newsock)
+        if (socket_t.init == newsock)
             throw new SocketAcceptException("Unable to accept socket connection");
 
         Socket newSocket;
@@ -2868,7 +2840,7 @@ public:
                 newSocket._blocking = _blocking;                 //inherits blocking mode
             newSocket._family = _family;             //same family
         }
-        catch(Throwable o)
+        catch (Throwable o)
         {
             _close(newsock);
             throw o;
@@ -2878,7 +2850,7 @@ public:
     }
 
     /// Disables sends and/or receives.
-    void shutdown(SocketShutdown how) @trusted nothrow @nogc
+    void shutdown(SocketShutdown how) @trusted const nothrow @nogc
     {
         .shutdown(sock, cast(int)how);
     }
@@ -2917,32 +2889,32 @@ public:
     static @property string hostName() @trusted     // getter
     {
         char[256] result;         // Host names are limited to 255 chars.
-        if(_SOCKET_ERROR == .gethostname(result.ptr, result.length))
+        if (_SOCKET_ERROR == .gethostname(result.ptr, result.length))
             throw new SocketOSException("Unable to obtain host name");
         return to!string(result.ptr);
     }
 
     /// Remote endpoint $(D Address).
-    @property Address remoteAddress() @trusted
+    @property Address remoteAddress() const @trusted
     {
         Address addr = createAddress();
         socklen_t nameLen = addr.nameLen;
-        if(_SOCKET_ERROR == .getpeername(sock, addr.name, &nameLen))
+        if (_SOCKET_ERROR == .getpeername(sock, addr.name, &nameLen))
             throw new SocketOSException("Unable to obtain remote socket address");
-        if(nameLen > addr.nameLen)
+        if (nameLen > addr.nameLen)
             throw new SocketParameterException("Not enough socket address storage");
         assert(addr.addressFamily == _family);
         return addr;
     }
 
     /// Local endpoint $(D Address).
-    @property Address localAddress() @trusted
+    @property Address localAddress() const @trusted
     {
         Address addr = createAddress();
         socklen_t nameLen = addr.nameLen;
-        if(_SOCKET_ERROR == .getsockname(sock, addr.name, &nameLen))
+        if (_SOCKET_ERROR == .getsockname(sock, addr.name, &nameLen))
             throw new SocketOSException("Unable to obtain local socket address");
-        if(nameLen > addr.nameLen)
+        if (nameLen > addr.nameLen)
             throw new SocketParameterException("Not enough socket address storage");
         assert(addr.addressFamily == _family);
         return addr;
@@ -2955,6 +2927,15 @@ public:
      */
     enum int ERROR = _SOCKET_ERROR;
 
+    private static int capToInt(size_t size) nothrow @nogc
+    {
+        // Windows uses int instead of size_t for length arguments.
+        // Luckily, the send/recv functions make no guarantee that
+        // all the data is sent, so we use that to send at most
+        // int.max bytes.
+        return size > size_t(int.max) ? int.max : cast(int)size;
+    }
+
     /**
      * Send data on the connection. If the socket is blocking and there is no
      * buffer space left, $(D send) waits.
@@ -2962,21 +2943,21 @@ public:
      * failure.
      */
     //returns number of bytes actually sent, or -1 on error
-    ptrdiff_t send(const(void)[] buf, SocketFlags flags) @trusted
+    ptrdiff_t send(const(void)[] buf, SocketFlags flags) @trusted const nothrow @nogc
     {
         static if (is(typeof(MSG_NOSIGNAL)))
         {
             flags = cast(SocketFlags)(flags | MSG_NOSIGNAL);
         }
         version( Windows )
-            auto sent = .send(sock, buf.ptr, to!int(buf.length), cast(int)flags);
+            auto sent = .send(sock, buf.ptr, capToInt(buf.length), cast(int)flags);
         else
             auto sent = .send(sock, buf.ptr, buf.length, cast(int)flags);
         return sent;
     }
 
     /// ditto
-    ptrdiff_t send(const(void)[] buf)
+    ptrdiff_t send(const(void)[] buf) @trusted const nothrow @nogc
     {
         return send(buf, SocketFlags.NONE);
     }
@@ -2988,7 +2969,7 @@ public:
      * Returns: The number of bytes actually sent, or $(D Socket.ERROR) on
      * failure.
      */
-    ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags, Address to) @trusted
+    ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags, Address to) @trusted const nothrow @nogc
     {
         static if (is(typeof(MSG_NOSIGNAL)))
         {
@@ -2996,7 +2977,7 @@ public:
         }
         version( Windows )
             return .sendto(
-                       sock, buf.ptr, std.conv.to!int(buf.length),
+                       sock, buf.ptr, capToInt(buf.length),
                        cast(int)flags, to.name, to.nameLen
                        );
         else
@@ -3004,7 +2985,7 @@ public:
     }
 
     /// ditto
-    ptrdiff_t sendTo(const(void)[] buf, Address to)
+    ptrdiff_t sendTo(const(void)[] buf, Address to) @trusted const nothrow @nogc
     {
         return sendTo(buf, SocketFlags.NONE, to);
     }
@@ -3012,14 +2993,14 @@ public:
 
     //assumes you connect()ed
     /// ditto
-    ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags) @trusted
+    ptrdiff_t sendTo(const(void)[] buf, SocketFlags flags) @trusted const nothrow @nogc
     {
         static if (is(typeof(MSG_NOSIGNAL)))
         {
             flags = cast(SocketFlags)(flags | MSG_NOSIGNAL);
         }
         version(Windows)
-            return .sendto(sock, buf.ptr, to!int(buf.length), cast(int)flags, null, 0);
+            return .sendto(sock, buf.ptr, capToInt(buf.length), cast(int)flags, null, 0);
         else
             return .sendto(sock, buf.ptr, buf.length, cast(int)flags, null, 0);
     }
@@ -3027,7 +3008,7 @@ public:
 
     //assumes you connect()ed
     /// ditto
-    ptrdiff_t sendTo(const(void)[] buf)
+    ptrdiff_t sendTo(const(void)[] buf) @trusted const nothrow @nogc
     {
         return sendTo(buf, SocketFlags.NONE);
     }
@@ -3040,14 +3021,16 @@ public:
      * has closed the connection, or $(D Socket.ERROR) on failure.
      */
     //returns number of bytes actually received, 0 on connection closure, or -1 on error
-    ptrdiff_t receive(void[] buf, SocketFlags flags) @trusted
+    ptrdiff_t receive(void[] buf, SocketFlags flags) @trusted const nothrow @nogc
     {
         version(Windows)         // Does not use size_t
         {
             return buf.length
-                   ? .recv(sock, buf.ptr, to!int(buf.length), cast(int)flags)
+                   ? .recv(sock, buf.ptr, capToInt(buf.length), cast(int)flags)
                    : 0;
-        } else {
+        }
+        else
+        {
             return buf.length
                    ? .recv(sock, buf.ptr, buf.length, cast(int)flags)
                    : 0;
@@ -3055,7 +3038,7 @@ public:
     }
 
     /// ditto
-    ptrdiff_t receive(void[] buf)
+    ptrdiff_t receive(void[] buf) @trusted const nothrow @nogc
     {
         return receive(buf, SocketFlags.NONE);
     }
@@ -3067,30 +3050,32 @@ public:
      * Returns: The number of bytes actually received, $(D 0) if the remote side
      * has closed the connection, or $(D Socket.ERROR) on failure.
      */
-    ptrdiff_t receiveFrom(void[] buf, SocketFlags flags, ref Address from) @trusted
+    ptrdiff_t receiveFrom(void[] buf, SocketFlags flags, ref Address from) @trusted const nothrow
     {
-        if(!buf.length)         //return 0 and don't think the connection closed
+        if (!buf.length)         //return 0 and don't think the connection closed
             return 0;
         if (from is null || from.addressFamily != _family)
             from = createAddress();
         socklen_t nameLen = from.nameLen;
         version(Windows)
         {
-            auto read = .recvfrom(sock, buf.ptr, to!int(buf.length), cast(int)flags, from.name, &nameLen);
+            auto read = .recvfrom(sock, buf.ptr, capToInt(buf.length), cast(int)flags, from.name, &nameLen);
             assert(from.addressFamily == _family);
-            // if(!read) //connection closed
+            // if (!read) //connection closed
             return read;
-        } else {
+        }
+        else
+        {
             auto read = .recvfrom(sock, buf.ptr, buf.length, cast(int)flags, from.name, &nameLen);
             assert(from.addressFamily == _family);
-            // if(!read) //connection closed
+            // if (!read) //connection closed
             return read;
         }
     }
 
 
     /// ditto
-    ptrdiff_t receiveFrom(void[] buf, ref Address from)
+    ptrdiff_t receiveFrom(void[] buf, ref Address from) @trusted const nothrow
     {
         return receiveFrom(buf, SocketFlags.NONE, from);
     }
@@ -3098,18 +3083,20 @@ public:
 
     //assumes you connect()ed
     /// ditto
-    ptrdiff_t receiveFrom(void[] buf, SocketFlags flags) @trusted
+    ptrdiff_t receiveFrom(void[] buf, SocketFlags flags) @trusted const nothrow @nogc
     {
-        if(!buf.length)         //return 0 and don't think the connection closed
+        if (!buf.length)         //return 0 and don't think the connection closed
             return 0;
         version(Windows)
         {
-            auto read = .recvfrom(sock, buf.ptr, to!int(buf.length), cast(int)flags, null, null);
-            // if(!read) //connection closed
+            auto read = .recvfrom(sock, buf.ptr, capToInt(buf.length), cast(int)flags, null, null);
+            // if (!read) //connection closed
             return read;
-        } else {
+        }
+        else
+        {
             auto read = .recvfrom(sock, buf.ptr, buf.length, cast(int)flags, null, null);
-            // if(!read) //connection closed
+            // if (!read) //connection closed
             return read;
         }
     }
@@ -3117,7 +3104,7 @@ public:
 
     //assumes you connect()ed
     /// ditto
-    ptrdiff_t receiveFrom(void[] buf)
+    ptrdiff_t receiveFrom(void[] buf) @trusted const nothrow @nogc
     {
         return receiveFrom(buf, SocketFlags.NONE);
     }
@@ -3126,31 +3113,31 @@ public:
     /// Get a socket option.
     /// Returns: The number of bytes written to $(D result).
     //returns the length, in bytes, of the actual result - very different from getsockopt()
-    int getOption(SocketOptionLevel level, SocketOption option, void[] result) @trusted
+    int getOption(SocketOptionLevel level, SocketOption option, void[] result) @trusted const
     {
         socklen_t len = cast(socklen_t) result.length;
-        if(_SOCKET_ERROR == .getsockopt(sock, cast(int)level, cast(int)option, result.ptr, &len))
+        if (_SOCKET_ERROR == .getsockopt(sock, cast(int)level, cast(int)option, result.ptr, &len))
             throw new SocketOSException("Unable to get socket option");
         return len;
     }
 
 
     /// Common case of getting integer and boolean options.
-    int getOption(SocketOptionLevel level, SocketOption option, out int32_t result) @trusted
+    int getOption(SocketOptionLevel level, SocketOption option, out int32_t result) @trusted const
     {
         return getOption(level, option, (&result)[0 .. 1]);
     }
 
 
     /// Get the linger option.
-    int getOption(SocketOptionLevel level, SocketOption option, out Linger result) @trusted
+    int getOption(SocketOptionLevel level, SocketOption option, out Linger result) @trusted const
     {
         //return getOption(cast(SocketOptionLevel)SocketOptionLevel.SOCKET, SocketOption.LINGER, (&result)[0 .. 1]);
         return getOption(level, option, (&result.clinger)[0 .. 1]);
     }
 
     /// Get a timeout (duration) option.
-    void getOption(SocketOptionLevel level, SocketOption option, out Duration result) @trusted
+    void getOption(SocketOptionLevel level, SocketOption option, out Duration result) @trusted const
     {
         enforce(option == SocketOption.SNDTIMEO || option == SocketOption.RCVTIMEO,
                 new SocketParameterException("Not a valid timeout option: " ~ to!string(option)));
@@ -3174,23 +3161,23 @@ public:
     }
 
     /// Set a socket option.
-    void setOption(SocketOptionLevel level, SocketOption option, void[] value) @trusted
+    void setOption(SocketOptionLevel level, SocketOption option, void[] value) @trusted const
     {
-        if(_SOCKET_ERROR == .setsockopt(sock, cast(int)level,
+        if (_SOCKET_ERROR == .setsockopt(sock, cast(int)level,
                                         cast(int)option, value.ptr, cast(uint) value.length))
             throw new SocketOSException("Unable to set socket option");
     }
 
 
     /// Common case for setting integer and boolean options.
-    void setOption(SocketOptionLevel level, SocketOption option, int32_t value) @trusted
+    void setOption(SocketOptionLevel level, SocketOption option, int32_t value) @trusted const
     {
         setOption(level, option, (&value)[0 .. 1]);
     }
 
 
     /// Set the linger option.
-    void setOption(SocketOptionLevel level, SocketOption option, Linger value) @trusted
+    void setOption(SocketOptionLevel level, SocketOption option, Linger value) @trusted const
     {
         //setOption(cast(SocketOptionLevel)SocketOptionLevel.SOCKET, SocketOption.LINGER, (&value)[0 .. 1]);
         setOption(level, option, (&value.clinger)[0 .. 1]);
@@ -3222,6 +3209,7 @@ public:
      * Example:
      * ---
      * import std.datetime;
+     * import std.typecons;
      * auto pair = socketPair();
      * scope(exit) foreach (s; pair) s.close();
      *
@@ -3230,14 +3218,14 @@ public:
      * pair[0].setOption(SocketOptionLevel.SOCKET,
      *     SocketOption.RCVTIMEO, dur!"seconds"(1));
      *
-     * auto sw = StopWatch(AutoStart.yes);
+     * auto sw = StopWatch(Yes.autoStart);
      * ubyte[1] buffer;
      * pair[0].receive(buffer);
      * writefln("Waited %s ms until the socket timed out.",
      *     sw.peek.msecs);
      * ---
      */
-    void setOption(SocketOptionLevel level, SocketOption option, Duration value) @trusted
+    void setOption(SocketOptionLevel level, SocketOption option, Duration value) @trusted const
     {
         enforce(option == SocketOption.SNDTIMEO || option == SocketOption.RCVTIMEO,
                 new SocketParameterException("Not a valid timeout option: " ~ to!string(option)));
@@ -3265,7 +3253,7 @@ public:
 
     /// Get a text description of this socket's error status, and clear the
     /// socket's error status.
-    string getErrorText()
+    string getErrorText() const
     {
         int32_t error;
         getOption(SocketOptionLevel.SOCKET, SocketOption.ERROR, error);
@@ -3285,7 +3273,7 @@ public:
      * $(D SocketFeatureException) if setting keep-alive parameters is
      * unsupported on the current platform.
      */
-    void setKeepAlive(int time, int interval) @trusted
+    void setKeepAlive(int time, int interval) @trusted const
     {
         version(Windows)
         {
@@ -3351,12 +3339,12 @@ public:
     in
     {
         //make sure none of the SocketSet's are the same object
-        if(checkRead)
+        if (checkRead)
         {
             assert(checkRead !is checkWrite);
             assert(checkRead !is checkError);
         }
-        if(checkWrite)
+        if (checkWrite)
         {
             assert(checkWrite !is checkError);
         }
@@ -3375,7 +3363,7 @@ public:
         }
         else
         {
-            if(checkRead)
+            if (checkRead)
             {
                 fr = checkRead.toFd_set();
                 n = checkRead.selectn();
@@ -3385,12 +3373,12 @@ public:
                 fr = null;
             }
 
-            if(checkWrite)
+            if (checkWrite)
             {
                 fw = checkWrite.toFd_set();
                 int _n;
                 _n = checkWrite.selectn();
-                if(_n > n)
+                if (_n > n)
                     n = _n;
             }
             else
@@ -3398,12 +3386,12 @@ public:
                 fw = null;
             }
 
-            if(checkError)
+            if (checkError)
             {
                 fe = checkError.toFd_set();
                 int _n;
                 _n = checkError.selectn();
-                if(_n > n)
+                if (_n > n)
                     n = _n;
             }
             else
@@ -3422,12 +3410,12 @@ public:
 
         version(Windows)
         {
-            if(_SOCKET_ERROR == result && WSAGetLastError() == WSAEINTR)
+            if (_SOCKET_ERROR == result && WSAGetLastError() == WSAEINTR)
                 return -1;
         }
         else version(Posix)
         {
-            if(_SOCKET_ERROR == result && errno == EINTR)
+            if (_SOCKET_ERROR == result && errno == EINTR)
                 return -1;
         }
         else
@@ -3435,7 +3423,7 @@ public:
             static assert(0);
         }
 
-        if(_SOCKET_ERROR == result)
+        if (_SOCKET_ERROR == result)
             throw new SocketOSException("Socket select error");
 
         return result;
@@ -3444,10 +3432,10 @@ public:
 
     /// Returns a new Address object for the current address family.
     /// Can be overridden to support other addresses.
-    protected Address createAddress() pure nothrow
+    protected Address createAddress() const pure nothrow
     {
         Address result;
-        switch(_family)
+        switch (_family)
         {
         static if (is(sockaddr_un))
         {
@@ -3522,19 +3510,6 @@ class UdpSocket: Socket
  * The two sockets are indistinguishable.
  *
  * Throws: $(D SocketException) if creation of the sockets fails.
- *
- * Example:
- * ---
- * immutable ubyte[] data = [1, 2, 3, 4];
- * auto pair = socketPair();
- * scope(exit) foreach (s; pair) s.close();
- *
- * pair[0].send(data);
- *
- * auto buf = new ubyte[data.length];
- * pair[1].receive(buf);
- * assert(buf == data);
- * ---
  */
 Socket[2] socketPair() @trusted
 {
@@ -3576,7 +3551,8 @@ Socket[2] socketPair() @trusted
         static assert(false);
 }
 
-unittest
+///
+@safe unittest
 {
     immutable ubyte[] data = [1, 2, 3, 4];
     auto pair = socketPair();

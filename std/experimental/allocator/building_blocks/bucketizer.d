@@ -1,3 +1,4 @@
+///
 module std.experimental.allocator.building_blocks.bucketizer;
 
 /**
@@ -17,26 +18,18 @@ for $(D Bucketizer). To handle them separately, $(D Segregator) may be of use.
 struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
 {
     import std.traits : hasMember;
-    import common = std.experimental.allocator.common : roundUpToMultipleOf,
-        reallocate;
+    import common = std.experimental.allocator.common : roundUpToMultipleOf;
+    import std.typecons : Ternary;
 
     static assert((max - (min - 1)) % step == 0,
         "Invalid limits when instantiating " ~ Bucketizer.stringof);
 
-    //static if (min == chooseAtRuntime) size_t _min;
-    //else alias _min = min;
-    //static if (max == chooseAtRuntime) size_t _max;
-    //else alias _max = max;
-    //static if (step == chooseAtRuntime) size_t _step;
-    //else alias _step = step;
-
-    // state {
+    // state
     /**
     The array of allocators is publicly available for e.g. initialization and
     inspection.
     */
     Allocator[(max + 1 - min) / step] buckets;
-    // }
 
     private Allocator* allocatorFor(size_t n)
     {
@@ -99,11 +92,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
     */
     bool expand(ref void[] b, size_t delta)
     {
-        if (!b.ptr)
-        {
-            b = allocate(delta);
-            return b.length == delta;
-        }
+        if (!b.ptr) return delta == 0;
         assert(b.length >= min && b.length <= max);
         const available = goodAllocSize(b.length);
         const desired = b.length + delta;
@@ -176,7 +165,7 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
         if (!b.ptr) return Ternary.no;
         if (auto a = allocatorFor(b.length))
         {
-            const actual = goodAllocSize(bytes);
+            const actual = goodAllocSize(b.length);
             return a.owns(b.ptr[0 .. actual]);
         }
         return Ternary.no;
@@ -230,12 +219,21 @@ struct Bucketizer(Allocator, size_t min, size_t max, size_t step)
 ///
 unittest
 {
+    import std.experimental.allocator.building_blocks.allocator_list : AllocatorList;
     import std.experimental.allocator.building_blocks.free_list : FreeList;
+    import std.experimental.allocator.building_blocks.region : Region;
     import std.experimental.allocator.mallocator : Mallocator;
     import std.experimental.allocator.common : unbounded;
-    Bucketizer!(FreeList!(Mallocator, 0, unbounded),
+    import std.typecons : Ternary;
+    import std.algorithm.comparison : max;
+    Bucketizer!(
+        FreeList!(
+            AllocatorList!(
+                (size_t n) => Region!Mallocator(max(n, 1024 * 1024))),
+            0, unbounded),
         65, 512, 64) a;
     auto b = a.allocate(400);
     assert(b.length == 400);
+    assert(a.owns(b) == Ternary.yes);
     a.deallocate(b);
 }

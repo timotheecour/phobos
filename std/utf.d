@@ -10,20 +10,18 @@
         $(LINK2 http://en.wikipedia.org/wiki/Unicode, Wikipedia)<br>
         $(LINK http://www.cl.cam.ac.uk/~mgk25/unicode.html#utf-8)<br>
         $(LINK http://anubis.dkuug.dk/JTC1/SC2/WG2/docs/n1335)
-    Macros:
-        WIKI = Phobos/StdUtf
-
     Copyright: Copyright Digital Mars 2000 - 2012.
-    License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
-    Authors:   $(WEB digitalmars.com, Walter Bright) and Jonathan M Davis
+    License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
+    Authors:   $(HTTP digitalmars.com, Walter Bright) and Jonathan M Davis
     Source:    $(PHOBOSSRC std/_utf.d)
    +/
 module std.utf;
 
-import std.meta;    // AliasSeq
+import std.meta;       // AliasSeq
 import std.range.primitives;
-import std.traits;  // isSomeChar, isSomeString
-import std.typecons : Flag;
+import std.traits;     // isSomeChar, isSomeString
+import std.typecons;   // Flag, Yes, No
+import std.exception;  // basicExceptionCtors
 
 //debug=utf;           // uncomment to turn on debugging printf's
 
@@ -35,13 +33,13 @@ debug (utf) import core.stdc.stdio : printf;
   +/
 class UTFException : Exception
 {
-    import core.internal.string;
+    import core.internal.string : unsignedToTempString, UnsignedStringBuf;
 
     uint[4] sequence;
     size_t  len;
 
     @safe pure nothrow @nogc
-    UTFException setSequence(uint[] data...)
+    UTFException setSequence(scope uint[] data...)
     {
         assert(data.length <= 4);
 
@@ -51,14 +49,16 @@ class UTFException : Exception
         return this;
     }
 
-    @safe pure nothrow
-    this(string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    // FIXME: Use std.exception.basicExceptionCtors here once bug #11500 is fixed
+
+    this(string msg, string file = __FILE__, size_t line = __LINE__,
+         Throwable next = null) @nogc @safe pure nothrow
     {
         super(msg, file, line, next);
     }
 
-    @safe pure
-    this(string msg, size_t index, string file = __FILE__, size_t line = __LINE__, Throwable next = null)
+    this(string msg, size_t index, string file = __FILE__,
+         size_t line = __LINE__, Throwable next = null) @safe pure nothrow
     {
         UnsignedStringBuf buf = void;
         msg ~= " (at index " ~ unsignedToTempString(index, buf, 10) ~ ")";
@@ -248,7 +248,7 @@ pure nothrow @safe @nogc unittest
 
     Returns:
         The number of code units in the UTF sequence. For UTF-8, this is a
-        value between 1 and 4 (as per $(WEB tools.ietf.org/html/rfc3629#section-3, RFC 3629$(COMMA) section 3)).
+        value between 1 and 4 (as per $(HTTP tools.ietf.org/html/rfc3629#section-3, RFC 3629$(COMMA) section 3)).
         For UTF-16, it is either 1 or 2. For UTF-32, it is always 1.
 
     Throws:
@@ -302,11 +302,11 @@ body
     return msbs;
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(string s, dchar c, size_t i = 0, size_t line = __LINE__)
     {
@@ -369,9 +369,9 @@ unittest
     });
 }
 
-unittest // invalid start bytes
+@safe unittest // invalid start bytes
 {
-    import std.exception: assertThrown;
+    import std.exception : assertThrown;
     immutable char[] invalidStartBytes = [
         0b1111_1000, // indicating a sequence length of 5
         0b1111_1100, // 6
@@ -379,7 +379,7 @@ unittest // invalid start bytes
         0b1111_1111, // 8
         0b1000_0000, // continuation byte
     ];
-    foreach(c; invalidStartBytes)
+    foreach (c; invalidStartBytes)
         assertThrown!UTFException(stride([c]));
 }
 
@@ -410,11 +410,11 @@ uint stride(S)(auto ref S str)
     return 1 + (u >= 0xD800 && u <= 0xDBFF);
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(wstring s, dchar c, size_t i = 0, size_t line = __LINE__)
     {
@@ -489,11 +489,11 @@ uint stride(S)(auto ref S str, size_t index = 0)
     return 1;
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(dstring s, dchar c, size_t i = 0, size_t line = __LINE__)
     {
@@ -567,7 +567,7 @@ unittest
 
     Returns:
         The number of code units in the UTF sequence. For UTF-8, this is a
-        value between 1 and 4 (as per $(WEB tools.ietf.org/html/rfc3629#section-3, RFC 3629$(COMMA) section 3)).
+        value between 1 and 4 (as per $(HTTP tools.ietf.org/html/rfc3629#section-3, RFC 3629$(COMMA) section 3)).
         For UTF-16, it is either 1 or 2. For UTF-32, it is always 1.
 
     Throws:
@@ -635,11 +635,11 @@ uint strideBack(S)(auto ref S str)
     throw new UTFException("The last code unit is not the end of the UTF-8 sequence");
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(string s, dchar c, size_t i = size_t.max, size_t line = __LINE__)
     {
@@ -732,11 +732,11 @@ uint strideBack(S)(auto ref S str)
     return 1 + (0xDC00 <= c2 && c2 <= 0xE000);
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(wstring s, dchar c, size_t i = size_t.max, size_t line = __LINE__)
     {
@@ -817,11 +817,11 @@ uint strideBack(S)(auto ref S str)
     return 1;
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     static void test(dstring s, dchar c, size_t i = size_t.max, size_t line = __LINE__)
     {
@@ -918,7 +918,7 @@ size_t toUCSindex(C)(const(C)[] str, size_t index) @safe pure
 }
 
 ///
-unittest
+@safe unittest
 {
     assert(toUCSindex(`hello world`, 7) == 7);
     assert(toUCSindex(`hello world`w, 7) == 7);
@@ -958,7 +958,7 @@ size_t toUTFindex(C)(const(C)[] str, size_t n) @safe pure
 }
 
 ///
-unittest
+@safe unittest
 {
     assert(toUTFindex(`hello world`, 7) == 7);
     assert(toUTFindex(`hello world`w, 7) == 7);
@@ -999,9 +999,9 @@ alias UseReplacementDchar = Flag!"useReplacementDchar";
 
     Throws:
         $(LREF UTFException) if $(D str[index]) is not the start of a valid UTF
-        sequence and useReplacementDchar is UseReplacementDchar.no
+        sequence and useReplacementDchar is $(D No.useReplacementDchar)
   +/
-dchar decode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(auto ref S str, ref size_t index)
+dchar decode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(auto ref S str, ref size_t index)
     if (!isSomeString!S &&
         isRandomAccessRange!S && hasSlicing!S && hasLength!S && isSomeChar!(ElementType!S))
 in
@@ -1020,8 +1020,8 @@ body
         return decodeImpl!(true, useReplacementDchar)(str, index);
 }
 
-dchar decode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(auto ref S str, ref size_t index) @trusted pure
-    if (isSomeString!S)
+dchar decode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(
+    auto ref S str, ref size_t index) @trusted pure if (isSomeString!S)
 in
 {
     assert(index < str.length, "Attempted to decode past the end of a string");
@@ -1061,8 +1061,8 @@ body
         type of range being used and how many code units had to be popped off
         before the code point was determined to be invalid.
   +/
-dchar decodeFront(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(ref S str, out size_t numCodeUnits)
-    if (!isSomeString!S && isInputRange!S && isSomeChar!(ElementType!S))
+dchar decodeFront(UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(
+    ref S str, out size_t numCodeUnits) if (!isSomeString!S && isInputRange!S && isSomeChar!(ElementType!S))
 in
 {
     assert(!str.empty);
@@ -1097,8 +1097,8 @@ body
     }
 }
 
-dchar decodeFront(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(ref S str, out size_t numCodeUnits) @trusted pure
-    if (isSomeString!S)
+dchar decodeFront(UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(
+    ref S str, out size_t numCodeUnits) @trusted pure if (isSomeString!S)
 in
 {
     assert(!str.empty);
@@ -1125,7 +1125,7 @@ body
 }
 
 /++ Ditto +/
-dchar decodeFront(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(ref S str)
+dchar decodeFront(UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(ref S str)
     if (isInputRange!S && isSomeChar!(ElementType!S))
 {
     size_t numCodeUnits;
@@ -1161,8 +1161,9 @@ package template codeUnitLimit(S)
  * Returns:
  *      decoded character
  */
-private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(auto ref S str, ref size_t index)
-    if (is(S : const char[]) || (isInputRange!S && is(Unqual!(ElementEncodingType!S) == char)))
+private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(
+    auto ref S str, ref size_t index) if (
+    is(S : const char[]) || (isInputRange!S && is(Unqual!(ElementEncodingType!S) == char)))
 {
     /* The following encodings are valid, except for the 5 and 6 byte
      * combinations:
@@ -1384,13 +1385,14 @@ unittest
     {
         auto r = R(s);
         size_t index;
-        dchar dc = decodeImpl!(false, Flag!"useReplacementDchar".yes)(r, index);
+        dchar dc = decodeImpl!(false, Yes.useReplacementDchar)(r, index);
         assert(dc == replacementDchar);
         assert(1 <= index && index <= s.length);
     }
 }
 
-private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(auto ref S str, ref size_t index)
+private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)
+(auto ref S str, ref size_t index)
     if (is(S : const wchar[]) || (isInputRange!S && is(Unqual!(ElementEncodingType!S) == wchar)))
 {
     static if (is(S : const wchar[]))
@@ -1424,8 +1426,6 @@ private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar 
                 return new UTFException(msg);
         }
     }
-
-    string msg;
 
     // The < case must be taken care of before decodeImpl is called.
     assert(u >= 0xD800);
@@ -1482,7 +1482,7 @@ private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar 
     return cast(dchar)u;
 }
 
-pure @nogc nothrow
+@safe pure @nogc nothrow
 unittest
 {
     // Add tests for useReplacemendDchar==true path
@@ -1502,13 +1502,14 @@ unittest
     {
         auto r = R(s);
         size_t index;
-        dchar dc = decodeImpl!(false, Flag!"useReplacementDchar".yes)(r, index);
+        dchar dc = decodeImpl!(false, Yes.useReplacementDchar)(r, index);
         assert(dc == replacementDchar);
         assert(1 <= index && index <= s.length);
     }
 }
 
-private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = UseReplacementDchar.no, S)(auto ref S str, ref size_t index)
+private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar = No.useReplacementDchar, S)(
+    auto ref S str, ref size_t index)
     if (is(S : const dchar[]) || (isInputRange!S && is(Unqual!(ElementEncodingType!S) == dchar)))
 {
     static if (is(S : const dchar[]))
@@ -1545,7 +1546,7 @@ private dchar decodeImpl(bool canIndex, UseReplacementDchar useReplacementDchar 
     }
 }
 
-pure @nogc nothrow
+@safe pure @nogc nothrow
 unittest
 {
     // Add tests for useReplacemendDchar==true path
@@ -1565,7 +1566,7 @@ unittest
     {
         auto r = R(s);
         size_t index;
-        dchar dc = decodeImpl!(false, Flag!"useReplacementDchar".yes)(r, index);
+        dchar dc = decodeImpl!(false, Yes.useReplacementDchar)(r, index);
         assert(dc == replacementDchar);
         assert(1 <= index && index <= s.length);
     }
@@ -1578,8 +1579,7 @@ version(unittest) private void testDecode(R)(R range,
                                              size_t expectedIndex,
                                              size_t line = __LINE__)
 {
-    import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
 
     static if (hasLength!R)
@@ -1607,8 +1607,7 @@ version(unittest) private void testDecodeFront(R)(ref R range,
                                                   size_t expectedNumCodeUnits,
                                                   size_t line = __LINE__)
 {
-    import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
 
     static if (hasLength!R)
@@ -1639,8 +1638,7 @@ version(unittest) private void testBothDecode(R)(R range,
 
 version(unittest) private void testBadDecode(R)(R range, size_t index, size_t line = __LINE__)
 {
-    import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
 
     immutable initialIndex = index;
@@ -1664,7 +1662,7 @@ version(unittest) private void testBadDecode(R)(R range, size_t index, size_t li
         assertThrown!UTFException(decodeFront(range, index), null, __FILE__, line);
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
@@ -1728,7 +1726,7 @@ unittest
     });
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
@@ -1770,7 +1768,7 @@ unittest
     });
 }
 
-unittest
+@system unittest
 {
     import std.conv : to;
     import std.exception;
@@ -1811,7 +1809,7 @@ unittest
     });
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -1823,14 +1821,16 @@ unittest
         static assert(isSafe!({ S str; size_t i = 0; decode(str, i);      }));
         static assert(isSafe!({ S str; size_t i = 0; decodeFront(str, i); }));
         static assert(isSafe!({ S str; decodeFront(str); }));
-        static assert((functionAttributes!({ S str; size_t i = 0; decode(str, i);      }) & FunctionAttribute.pure_) != 0);
-        static assert((functionAttributes!({ S str; size_t i = 0; decodeFront(str, i); }) & FunctionAttribute.pure_) != 0);
+        static assert((functionAttributes!({ S str; size_t i = 0; decode(str, i); }) & FunctionAttribute.pure_) != 0);
+        static assert((functionAttributes!({
+            S str; size_t i = 0; decodeFront(str, i);
+        }) & FunctionAttribute.pure_) != 0);
         static assert((functionAttributes!({ S str; decodeFront(str); }) & FunctionAttribute.pure_) != 0);
     }
     });
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     char[4] val;
@@ -1860,7 +1860,7 @@ private dchar _utfException(UseReplacementDchar useReplacementDchar)(string msg,
     Throws:
         $(D UTFException) if $(D c) is not a valid UTF code point.
   +/
-size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+size_t encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref char[4] buf, dchar c) @safe pure
 {
     if (c <= 0x7F)
@@ -1903,7 +1903,7 @@ size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     goto L3;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -1928,14 +1928,14 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0xDFFF));
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
-    assert(encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000) == buf.stride);
+    assert(encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000) == buf.stride);
     assert(buf.front == replacementDchar);
     });
 }
 
 
 /// Ditto
-size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+size_t encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref wchar[2] buf, dchar c) @safe pure
 {
     if (c <= 0xFFFF)
@@ -1960,7 +1960,7 @@ size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     goto L1;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -1981,14 +1981,14 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0xDFFF));
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
-    assert(encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000) == buf.stride);
+    assert(encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000) == buf.stride);
     assert(buf.front == replacementDchar);
     });
 }
 
 
 /// Ditto
-size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+size_t encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref dchar[1] buf, dchar c) @safe pure
 {
     if ((0xD800 <= c && c <= 0xDFFF) || 0x10FFFF < c)
@@ -1999,7 +1999,7 @@ size_t encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     return 1;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -2019,7 +2019,7 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0xDFFF));
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
-    assert(encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000) == buf.stride);
+    assert(encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000) == buf.stride);
     assert(buf.front == replacementDchar);
     });
 }
@@ -2031,7 +2031,7 @@ unittest
     Throws:
         $(D UTFException) if $(D c) is not a valid UTF code point.
   +/
-void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+void encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref char[] str, dchar c) @safe pure
 {
     char[] r = str;
@@ -2085,7 +2085,7 @@ void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     str = r;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     debug(utf) printf("utf.encode.unittest\n");
@@ -2108,7 +2108,7 @@ unittest
     });
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -2134,13 +2134,13 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
     assert(buf.back != replacementDchar);
-    encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000);
+    encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000);
     assert(buf.back == replacementDchar);
     });
 }
 
 /// ditto
-void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+void encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref wchar[] str, dchar c) @safe pure
 {
     wchar[] r = str;
@@ -2173,7 +2173,7 @@ void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     str = r;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -2195,13 +2195,13 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
     assert(buf.back != replacementDchar);
-    encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000);
+    encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000);
     assert(buf.back == replacementDchar);
     });
 }
 
 /// ditto
-void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
+void encode(UseReplacementDchar useReplacementDchar = No.useReplacementDchar)(
     ref dchar[] str, dchar c) @safe pure
 {
     if ((0xD800 <= c && c <= 0xDFFF) || 0x10FFFF < c)
@@ -2211,7 +2211,7 @@ void encode(UseReplacementDchar useReplacementDchar = UseReplacementDchar.no)(
     str ~= c;
 }
 
-unittest
+@safe unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -2232,7 +2232,7 @@ unittest
     assertThrown!UTFException(encode(buf, cast(dchar)0x110000));
 
     assert(buf.back != replacementDchar);
-    encode!(UseReplacementDchar.yes)(buf, cast(dchar)0x110000);
+    encode!(Yes.useReplacementDchar)(buf, cast(dchar)0x110000);
     assert(buf.back == replacementDchar);
     });
 }
@@ -2265,7 +2265,7 @@ ubyte codeLength(C)(dchar c) @safe pure nothrow @nogc
 }
 
 ///
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
     assert(codeLength!char('a') == 1);
     assert(codeLength!wchar('a') == 1);
@@ -2301,7 +2301,7 @@ size_t codeLength(C, InputRange)(InputRange input)
 }
 
 ///
-unittest
+@safe unittest
 {
     import std.conv : to;
     assert(codeLength!char("hello world") ==
@@ -2324,11 +2324,11 @@ unittest
            `, ça, ce ne serait pas bien.`);
 }
 
-unittest
+@safe unittest
 {
     import std.conv : to;
     import std.exception;
-    import std.algorithm : filter;
+    import std.algorithm.iteration : filter;
 
     assertCTFEable!(
     {
@@ -2370,7 +2370,7 @@ if (isSomeChar!C)
     else
         static assert(0);
 }
-unittest
+@safe unittest
 {
     assert( canSearchInCodeUnits! char('a'));
     assert( canSearchInCodeUnits!wchar('a'));
@@ -2408,7 +2408,7 @@ void validate(S)(in S str) @safe pure
 }
 
 
-unittest // bugzilla 12923
+@safe unittest // bugzilla 12923
 {
     import std.exception;
     assertThrown((){
@@ -2418,16 +2418,7 @@ unittest // bugzilla 12923
 }
 
 /* =================== Conversion to UTF8 ======================= */
-
-pure
-{
-
-char[] toUTF8(return out char[4] buf, dchar c) nothrow @nogc @safe
-in
-{
-    assert(isValidDchar(c));
-}
-body
+char[] toUTF8(return out char[4] buf, dchar c) nothrow @nogc @safe pure
 {
     if (c <= 0x7F)
     {
@@ -2442,91 +2433,75 @@ body
     }
     else if (c <= 0xFFFF)
     {
+        if (c >= 0xD800 && c <= 0xDFFF)
+            c = replacementDchar;
+
+    L3:
         buf[0] = cast(char)(0xE0 | (c >> 12));
         buf[1] = cast(char)(0x80 | ((c >> 6) & 0x3F));
         buf[2] = cast(char)(0x80 | (c & 0x3F));
         return buf[0 .. 3];
     }
-    else if (c <= 0x10FFFF)
+    else
     {
+        if (c > 0x10FFFF)
+        {
+            c = replacementDchar;
+            goto L3;
+        }
+
         buf[0] = cast(char)(0xF0 | (c >> 18));
         buf[1] = cast(char)(0x80 | ((c >> 12) & 0x3F));
         buf[2] = cast(char)(0x80 | ((c >> 6) & 0x3F));
         buf[3] = cast(char)(0x80 | (c & 0x3F));
         return buf[0 .. 4];
     }
-
-    assert(0);
 }
 
-
-/*******************
- * Encodes string $(D_PARAM s) into UTF-8 and returns the encoded string.
+/**
+ * Encodes the elements of `s` to UTF-8 and returns a newly allocated
+ * string of the elements.
+ *
+ * Params:
+ *     s = the string to encode
+ * Returns:
+ *     A UTF-8 string
+ * See_Also:
+ *     For a lazy, non-allocating version of these functions, see $(LREF byUTF).
  */
-string toUTF8(in char[] s) @safe
+string toUTF8(S)(S s) if (isInputRange!S && isSomeChar!(ElementEncodingType!S))
 {
-    validate(s);
-    return s.idup;
+    return toUTFImpl!string(s);
 }
 
-/// ditto
-string toUTF8(in wchar[] s) @safe
+///
+@safe pure unittest
 {
-    char[] r;
-    size_t i;
-    size_t slen = s.length;
+    import std.algorithm.comparison : equal;
 
-    r.length = slen;
-    for (i = 0; i < slen; i++)
-    {
-        wchar c = s[i];
+    // The ö is represented by two UTF-8 code units
+    assert("Hellø"w.toUTF8.equal(['H', 'e', 'l', 'l', 0xC3, 0xB8]));
 
-        if (c <= 0x7F)
-            r[i] = cast(char)c;     // fast path for ascii
-        else
-        {
-            r.length = i;
-            while (i < slen)
-                encode(r, decode(s, i));
-            break;
-        }
-    }
-
-    return r;
+    // 𐐷 is four code units in UTF-8
+    assert("𐐷"d.toUTF8.equal([0xF0, 0x90, 0x90, 0xB7]));
 }
 
-/// ditto
-string toUTF8(in dchar[] s) @safe
+@system pure unittest
 {
-    char[] r;
-    size_t i;
-    size_t slen = s.length;
+    import std.internal.test.dummyrange : ReferenceInputRange;
+    import std.algorithm.comparison : equal;
 
-    r.length = slen;
-    for (i = 0; i < slen; i++)
-    {
-        dchar c = s[i];
+    auto r1 = new ReferenceInputRange!dchar("Hellø");
+    auto r2 = new ReferenceInputRange!dchar("𐐷");
 
-        if (c <= 0x7F)
-            r[i] = cast(char)c;     // fast path for ascii
-        else
-        {
-            r.length = i;
-            foreach (dchar d; s[i .. slen])
-            {
-                encode(r, d);
-            }
-            break;
-        }
-    }
-
-    return r;
+    assert(r1.toUTF8.equal(['H', 'e', 'l', 'l', 0xC3, 0xB8]));
+    assert(r2.toUTF8.equal([0xF0, 0x90, 0x90, 0xB7]));
 }
 
 
 /* =================== Conversion to UTF16 ======================= */
 
-wchar[] toUTF16(return ref wchar[2] buf, dchar c) nothrow @nogc @safe
+wchar[] toUTF16(return ref wchar[2] buf, dchar c) nothrow @nogc @safe pure
 in
 {
     assert(isValidDchar(c));
@@ -2546,67 +2521,56 @@ body
     }
 }
 
-/****************
- * Encodes string $(D s) into UTF-16 and returns the encoded string.
+/**
+ * Encodes the elements of `s` to UTF-16 and returns a newly GC allocated
+ * `wstring` of the elements.
+ *
+ * Params:
+ *     s = the range to encode
+ * Returns:
+ *     A UTF-16 string
+ * See_Also:
+ *     For a lazy, non-allocating version of these functions, see $(LREF byUTF).
  */
-wstring toUTF16(in char[] s) @safe
+wstring toUTF16(S)(S s) if (isInputRange!S && isSomeChar!(ElementEncodingType!S))
 {
-    wchar[] r;
-    size_t slen = s.length;
-
-    r.length = slen;
-    r.length = 0;
-    for (size_t i = 0; i < slen; )
-    {
-        dchar c = s[i];
-        if (c <= 0x7F)
-        {
-            i++;
-            r ~= cast(wchar)c;
-        }
-        else
-        {
-            c = decode(s, i);
-            encode(r, c);
-        }
-    }
-
-    return r;
+    return toUTFImpl!wstring(s);
 }
 
-/// ditto
-wstring toUTF16(in wchar[] s) @safe
+///
+@safe pure unittest
 {
-    validate(s);
-    return s.idup;
+    import std.algorithm.comparison : equal;
+
+    // these graphemes are two code units in UTF-16 and one in UTF-32
+    assert("𤭢"d.length == 1);
+    assert("𐐷"d.length == 1);
+
+    assert("𤭢"d.toUTF16.equal([0xD852, 0xDF62]));
+    assert("𐐷"d.toUTF16.equal([0xD801, 0xDC37]));
 }
 
-/// ditto
-wstring toUTF16(in dchar[] s) @safe
+@system pure unittest
 {
-    wchar[] r;
-    size_t slen = s.length;
+    import std.internal.test.dummyrange : ReferenceInputRange;
+    import std.algorithm.comparison : equal;
 
-    r.length = slen;
-    r.length = 0;
-    for (size_t i = 0; i < slen; i++)
-    {
-        encode(r, s[i]);
-    }
+    auto r1 = new ReferenceInputRange!dchar("𤭢");
+    auto r2 = new ReferenceInputRange!dchar("𐐷");
 
-    return r;
+    assert(r1.toUTF16.equal([0xD852, 0xDF62]));
+    assert(r2.toUTF16.equal([0xD801, 0xDC37]));
 }
-
 
 /* =================== Conversion to UTF32 ======================= */
 
 /*****
  * Encodes string $(D_PARAM s) into UTF-32 and returns the encoded string.
  */
-dstring toUTF32(in char[] s) @safe
+dstring toUTF32(scope const char[] s) @safe pure
 {
     dchar[] r;
-    size_t slen = s.length;
+    immutable slen = s.length;
     size_t j = 0;
 
     r.length = slen;        // r[] will never be longer than s[]
@@ -2624,10 +2588,10 @@ dstring toUTF32(in char[] s) @safe
 }
 
 /// ditto
-dstring toUTF32(in wchar[] s) @safe
+dstring toUTF32(scope const wchar[] s) @safe pure
 {
     dchar[] r;
-    size_t slen = s.length;
+    immutable slen = s.length;
     size_t j = 0;
 
     r.length = slen;        // r[] will never be longer than s[]
@@ -2645,14 +2609,32 @@ dstring toUTF32(in wchar[] s) @safe
 }
 
 /// ditto
-dstring toUTF32(in dchar[] s) @safe
+dstring toUTF32(scope const dchar[] s) @safe pure
 {
     validate(s);
     return s.idup;
 }
 
-} // Convert functions are @safe
+private T toUTFImpl(T, S)(S s)
+{
+    static if (is(S : T))
+    {
+        return s.idup;
+    }
+    else
+    {
+        import std.array : appender;
+        auto app = appender!T();
 
+        static if (hasLength!S || isSomeString!S)
+            app.reserve(s.length);
+
+        foreach (c; s.byUTF!(Unqual!(ElementEncodingType!T)))
+            app.put(c);
+
+        return app.data;
+    }
+}
 
 /* =================== toUTFz ======================= */
 
@@ -2722,7 +2704,8 @@ private P toUTFzImpl(P, S)(S str) @safe pure
     {
         typeof(*P.init)[] retval = ['\0'];
 
-        return retval.ptr;
+        auto trustedPtr() @trusted { return retval.ptr; }
+        return trustedPtr();
     }
 
     alias C = Unqual!(ElementEncodingType!S);
@@ -2749,7 +2732,7 @@ private P toUTFzImpl(P, S)(S str) @safe pure
             // unreadable. Otherwise, it's definitely pointing to valid
             // memory.
             if ((cast(size_t)p & 3) && *p == '\0')
-                return str.ptr;
+                return &str[0];
         }
 
         return toUTFzImpl!(P, const(C)[])(cast(const(C)[])str);
@@ -2776,11 +2759,11 @@ private P toUTFzImpl(P, S)(S str) @safe pure
             auto p = trustedPtrAdd(str);
 
             if ((cast(size_t)p & 3) && *p == '\0')
-                return str.ptr;
+                return &str[0];
         }
 
         str ~= '\0';
-        return str.ptr;
+        return &str[0];
     }
     //const(C)[] -> C* or immutable(C)* or
     //C[] -> immutable(C)*
@@ -2808,14 +2791,14 @@ private P toUTFzImpl(P, S)(S str) @safe pure
         retval.put(c);
     retval.put('\0');
 
-    return cast(P)retval.data.ptr;
+    return () @trusted { return cast(P)retval.data.ptr; } ();
 }
 
 @safe pure unittest
 {
     import std.conv : to;
     import std.exception;
-    import std. string : format;
+    import std.string : format;
     import core.exception : AssertError;
     import std.algorithm;
 
@@ -2924,7 +2907,7 @@ const(wchar)* toUTF16z(C)(const(C)[] str) @safe pure
 
 /* ================================ tests ================================== */
 
-pure unittest
+@safe pure unittest
 {
     import std.exception;
     debug(utf) printf("utf.toUTF.unittest\n");
@@ -2971,7 +2954,7 @@ size_t count(C)(const(C)[] str) @trusted pure nothrow @nogc
     return walkLength(str);
 }
 
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
     import std.exception;
     assertCTFEable!(
@@ -3096,17 +3079,34 @@ enum dchar replacementDchar = '\uFFFD';
  * Iterate a range of char, wchar, or dchars by code unit.
  *
  * The purpose is to bypass the special case decoding that
- * $(XREF array,front) does to character arrays.
+ * $(REF front, std,range,primitives) does to character arrays. As a result,
+ * using ranges with `byCodeUnit` can be `nothrow` while $(REF front, std,range,primitives)
+ * throws when it encounters invalid Unicode sequences.
+ *
+ * A code unit is a building block of the UTF encodings. Generally, an
+ * individual code unit does not represent what's perceived as a full
+ * character (a.k.a. a grapheme cluster in Unicode terminology). Many characters
+ * are encoded with multiple code units. For example, the UTF-8 code units for
+ * `ø` are `0xC3 0xB8`. That means, an individual element of `byCodeUnit`
+ * often does not form a character on its own. Attempting to treat it as
+ * one while iterating over the resulting range will give nonsensical results.
+ *
  * Params:
- *      r = input range of characters, or array of characters
+ *      r = an input range of characters, or an array of characters
  * Returns:
- *      input range
+ *     If `r` is not an auto-decodable string, then `r` is returned.
+ *
+ *      Otherwise, an input range with a length if $(REF isAggregateType, std,traits)
+ *      is `true` for `R`. Otherwise, this returns a finite random access range
+ *      with slicing.
+ * See_Also:
+ *      Refer to the $(MREF std, uni) docs for a reference on Unicode terminology.
+ *
+ *      For a range that iterates by grapheme cluster (written character) see
+ *      $(REF byGrapheme, std,uni).
  */
-
 auto byCodeUnit(R)(R r) if (isAutodecodableString!R)
 {
-    /* Turn an array into an InputRange.
-     */
     static struct ByCodeUnitImpl
     {
     pure nothrow @nogc:
@@ -3163,6 +3163,38 @@ auto ref byCodeUnit(R)(R r)
 {
     // byCodeUnit for ranges and dchar[] is a no-op
     return r;
+}
+
+///
+@safe unittest
+{
+    auto r = "Hello, World!".byCodeUnit();
+    static assert(hasLength!(typeof(r)));
+    static assert(hasSlicing!(typeof(r)));
+    static assert(isRandomAccessRange!(typeof(r)));
+    static assert(is(ElementType!(typeof(r)) == immutable char));
+
+    // contrast with the range capabilities of standard strings
+    auto s = "Hello, World!";
+    static assert(isBidirectionalRange!(typeof(r)));
+    static assert(is(ElementType!(typeof(s)) == dchar));
+
+    static assert(!isRandomAccessRange!(typeof(s)));
+    static assert(!hasSlicing!(typeof(s)));
+    static assert(!hasLength!(typeof(s)));
+}
+
+/// `byCodeUnit` does no Unicode decoding
+@safe unittest
+{
+    string noel1 = "noe\u0308l"; // noël using e + combining diaeresis
+    assert(noel1.byCodeUnit[2] != 'ë');
+    assert(noel1.byCodeUnit[2] == 'e');
+
+    string noel2 = "no\u00EBl"; // noël using a precomposed ë character
+    // Because string is UTF-8, the code unit at index 2 is just
+    // the first of a sequence that encodes 'ë'
+    assert(noel2.byCodeUnit[2] != 'ë');
 }
 
 pure nothrow @nogc unittest
@@ -3263,7 +3295,7 @@ alias byWchar = byUTF!wchar;
 /// Ditto
 alias byDchar = byUTF!dchar;
 
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
   {
     char[5] s;
@@ -3310,7 +3342,7 @@ pure nothrow @nogc unittest
   }
 }
 
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
   {
     wchar[11] s;
@@ -3352,7 +3384,7 @@ pure nothrow @nogc unittest
   }
 }
 
-pure nothrow @nogc unittest
+@safe pure nothrow @nogc unittest
 {
   {
     dchar[9] s;
@@ -3483,19 +3515,29 @@ int impureVariable;
 }
 
 /****************************
- * Iterate an input range of characters by char type C.
+ * Iterate an input range of characters by char type `C` by
+ * encoding the elements of the range.
  *
- * UTF sequences that cannot be converted to UTF-8 are replaced by U+FFFD
- * per "5.22 Best Practice for U+FFFD Substitution" of the Unicode Standard 6.2.
- * Hence byUTF is not symmetric.
+ * UTF sequences that cannot be converted to the specified encoding are
+ * replaced by U+FFFD per "5.22 Best Practice for U+FFFD Substitution"
+ * of the Unicode Standard 6.2. Hence byUTF is not symmetric.
  * This algorithm is lazy, and does not allocate memory.
- * Purity, nothrow, and safety are inferred from the r parameter.
+ * `@nogc`, `pure`-ity, `nothrow`, and `@safe`-ty are inferred from the
+ * `r` parameter.
  *
  * Params:
- *      C = char, wchar, or dchar
+ *      C = `char`, `wchar`, or `dchar`
  *      r = input range of characters, or array of characters
  * Returns:
- *      input range of type C
+ *      A forward range if r is a range and not auto-decodable, as defined by
+ *      $(REF isAutodecodableString, std, traits), and if the base range is
+ *      also a forward range.
+ *
+ *      Or, if r is a range and it is auto-decodable and
+ *      `is(ElementEncodingType!typeof(r) == C)`, then the range is passed
+ *      to $(LREF byCodeUnit).
+ *
+ *      Otherwise, an input range of characters.
  */
 template byUTF(C) if (isSomeChar!C)
 {
@@ -3537,8 +3579,27 @@ template byUTF(C) if (isSomeChar!C)
                     if (pos == fill)
                     {
                         pos = 0;
-                        fill = cast(ushort)encode!(UseReplacementDchar.yes)(
-                            buf, decodeFront!(UseReplacementDchar.yes)(r));
+                        auto c = r.front;
+
+                        if (c <= 0x7F)
+                        {
+                            fill = 1;
+                            r.popFront;
+                            buf[pos] = cast(C) c;
+                        }
+                        else
+                        {
+                            static if (is(RC == dchar))
+                            {
+                                fill = cast(ushort) encode!(Yes.useReplacementDchar)(buf, c);
+                                r.popFront;
+                            }
+                            else
+                            {
+                                fill = cast(ushort) encode!(Yes.useReplacementDchar)(
+                                    buf, decodeFront!(Yes.useReplacementDchar)(r));
+                            }
+                        }
                     }
                     return buf[pos];
                 }
@@ -3573,12 +3634,18 @@ template byUTF(C) if (isSomeChar!C)
 }
 
 ///
-@safe pure nothrow @nogc unittest
+@safe pure nothrow unittest
 {
-    foreach (c; "h".byUTF!char())
-        assert(c == 'h');
-    foreach (c; "h".byUTF!wchar())
-        assert(c == 'h');
-    foreach (c; "h".byUTF!dchar())
-        assert(c == 'h');
+    import std.algorithm.comparison : equal;
+
+    // hellö as a range of `char`s, which are UTF-8
+    "hell\u00F6".byUTF!char().equal(['h', 'e', 'l', 'l', 0xC3, 0xB6]);
+
+    // `wchar`s are able to hold the ö in a single element (UTF-16 code unit)
+    "hell\u00F6".byUTF!wchar().equal(['h', 'e', 'l', 'l', 'ö']);
+
+    // 𐐷 is four code units in UTF-8, two in UTF-16, and one in UTF-32
+    "𐐷".byUTF!char().equal([0xF0, 0x90, 0x90, 0xB7]);
+    "𐐷".byUTF!wchar().equal([0xD801, 0xDC37]);
+    "𐐷".byUTF!dchar().equal([0x00010437]);
 }

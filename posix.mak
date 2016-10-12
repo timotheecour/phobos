@@ -26,9 +26,13 @@
 # OS can be linux, win32, win32wine, osx, or freebsd. The system will be
 # determined by using uname
 
-QUIET:=@
+QUIET:=
 
 include osmodel.mak
+
+ifeq (osx,$(OS))
+	export MACOSX_DEPLOYMENT_TARGET=10.7
+endif
 
 # Default to a release built, override with BUILD=debug
 ifeq (,$(BUILD))
@@ -107,6 +111,10 @@ else
 	DFLAGS += -O -release
 endif
 
+ifdef ENABLE_COVERAGE
+DFLAGS  += -cov
+endif
+
 # Set DOTOBJ and DOTEXE
 ifeq (,$(findstring win,$(OS)))
 	DOTOBJ:=.o
@@ -119,6 +127,9 @@ else
 endif
 
 LINKDL:=$(if $(findstring $(OS),linux),-L-ldl,)
+
+# use timelimit to avoid deadlocks if available
+TIMELIMIT:=$(if $(shell which timelimit 2>/dev/null || true),timelimit -t 60 ,)
 
 # Set VERSION, where the file is that contains the version string
 VERSION=../dmd/VERSION
@@ -142,8 +153,6 @@ endif
 ################################################################################
 MAIN = $(ROOT)/emptymain.d
 
-# Given one or more packages, returns their respective libraries
-P2LIB=$(addprefix $(ROOT)/libphobos2_,$(addsuffix $(DOTLIB),$(subst /,_,$1)))
 # Given one or more packages, returns the modules they contain
 P2MODULES=$(foreach P,$1,$(addprefix $P/,$(PACKAGE_$(subst /,_,$P))))
 
@@ -155,20 +164,21 @@ STD_PACKAGES = std $(addprefix std/,\
   experimental/allocator/building_blocks experimental/logger \
   experimental/ndslice \
   net \
-  range regex)
+  experimental range regex)
 
 # Modules broken down per package
 
 PACKAGE_std = array ascii base64 bigint bitmanip compiler complex concurrency \
-  concurrencybase conv cstream csv datetime demangle encoding exception file format \
-  functional getopt json math mathspecial meta metastrings mmfile numeric \
-  outbuffer parallelism path process random signals socket socketstream stdint \
-  stdio stdiobase stream string syserror system traits typecons typetuple uni \
+  conv csv datetime demangle encoding exception file format \
+  functional getopt json math mathspecial meta mmfile numeric \
+  outbuffer parallelism path process random signals socket stdint \
+  stdio stdiobase string system traits typecons typetuple uni \
   uri utf uuid variant xml zip zlib
+PACKAGE_std_experimental = typecons
 PACKAGE_std_algorithm = comparison iteration mutation package searching setops \
   sorting
 PACKAGE_std_container = array binaryheap dlist package rbtree slist util
-PACKAGE_std_digest = crc digest hmac md ripemd sha
+PACKAGE_std_digest = crc digest hmac md murmurhash ripemd sha
 PACKAGE_std_experimental_logger = core filelogger \
   nulllogger multilogger package
 PACKAGE_std_experimental_allocator = \
@@ -182,7 +192,7 @@ PACKAGE_std_experimental_ndslice = package iteration selection slice
 PACKAGE_std_net = curl isemail
 PACKAGE_std_range = interfaces package primitives
 PACKAGE_std_regex = package $(addprefix internal/,generator ir parser \
-  backtracking kickstart tests thompson)
+  backtracking bitnfa tests tests2 tests3 thompson shiftor)
 
 # Modules in std (including those in packages)
 STD_MODULES=$(call P2MODULES,$(STD_PACKAGES))
@@ -199,17 +209,14 @@ EXTRA_MODULES_COMMON := $(addprefix etc/c/,curl odbc/sql odbc/sqlext \
   odbc/sqltypes odbc/sqlucode sqlite3 zlib) $(addprefix std/c/,fenv locale \
   math process stdarg stddef stdio stdlib string time wcharh)
 
-ifeq (,$(findstring win,$(OS)))
-	EXTRA_DOCUMENTABLES := $(EXTRA_MODULES_LINUX) $(EXTRA_MODULES_COMMON)
-else
-	EXTRA_DOCUMENTABLES := $(EXTRA_MODULES_WIN32) $(EXTRA_MODULES_COMMON)
-endif
+EXTRA_DOCUMENTABLES := $(EXTRA_MODULES_LINUX) $(EXTRA_MODULES_WIN32) $(EXTRA_MODULES_COMMON)
 
 EXTRA_MODULES_INTERNAL := $(addprefix			\
+	std/concurrencybase \
 	std/internal/digest/, sha_SSSE3 ) $(addprefix \
 	std/internal/math/, biguintcore biguintnoasm biguintx86	\
 	gammafunction errorfunction) $(addprefix std/internal/, \
-	cstring processinit unicode_tables scopebuffer\
+	cstring encodinginit processinit unicode_tables scopebuffer\
 	unicode_comp unicode_decomp unicode_grapheme unicode_norm) \
 	$(addprefix std/internal/test/, dummyrange) \
 	$(addprefix std/experimental/ndslice/, internal) \
@@ -233,15 +240,6 @@ ALL_D_FILES = $(addsuffix .d, $(STD_MODULES) $(EXTRA_MODULES_COMMON) \
 # C files to be part of the build
 C_MODULES = $(addprefix etc/c/zlib/, adler32 compress crc32 deflate	\
 	gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil)
-C_FILES = $(addsuffix .c,$(C_MODULES))
-# C files that are not compiled (right now only zlib-related)
-C_EXTRAS = $(addprefix etc/c/zlib/, algorithm.txt ChangeLog crc32.h	\
-deflate.h example.c inffast.h inffixed.h inflate.h inftrees.h		\
-linux.mak minigzip.c osx.mak README trees.h win32.mak zconf.h		\
-win64.mak \
-gzguts.h zlib.3 zlib.h zutil.h)
-# Aggregate all C files over all OSs (this is for the zip file)
-ALL_C_FILES = $(C_FILES) $(C_EXTRAS)
 
 OBJS = $(addsuffix $(DOTOBJ),$(addprefix $(ROOT)/,$(C_MODULES)))
 
@@ -357,15 +355,17 @@ moduleName=$(subst /,.,$(1))
 
 # target for batch unittests (using shared phobos library and test_runner)
 unittest/%.run : $(ROOT)/unittest/test_runner
-	$(QUIET)$(RUN) $< $(call moduleName,$*)
+	$(QUIET)$(TIMELIMIT)$(RUN) $< $(call moduleName,$*)
 
 # Target for quickly running a single unittest (using static phobos library).
 # For example: "make std/algorithm/mutation.test"
 # The mktemp business is needed so .o files don't clash in concurrent unittesting.
 %.test : %.d $(LIB)
-	T=`mktemp -d /tmp/.dmd-run-test.XXXXXX` && \
-	  $(DMD) -od$$T $(DFLAGS) -main -unittest $(LIB) -defaultlib= -debuglib= $(LINKDL) -cov -run $< && \
-	  rm -rf $$T
+	T=`mktemp -d /tmp/.dmd-run-test.XXXXXX` &&                                                              \
+	  (                                                                                                     \
+	    $(DMD) -od$$T $(DFLAGS) -main -unittest $(LIB) -defaultlib= -debuglib= $(LINKDL) -cov -run $< ;     \
+	    RET=$$? ; rm -rf $$T ; exit $$RET                                                                   \
+	  )
 
 # Target for quickly unittesting all modules and packages within a package,
 # transitively. For example: "make std/algorithm.test"
@@ -386,8 +386,12 @@ unittest/%.run : $(ROOT)/unittest/test_runner
 clean :
 	rm -rf $(ROOT_OF_THEM_ALL) $(ZIPFILE) $(DOC_OUTPUT_DIR)
 
+gitzip:
+	git archive --format=zip HEAD > $(ZIPFILE)
+
 zip :
-	zip $(ZIPFILE) $(MAKEFILE) $(ALL_D_FILES) $(ALL_C_FILES) index.d win32.mak win64.mak osmodel.mak
+	-rm -f $(ZIPFILE)
+	zip -r $(ZIPFILE) . -x .git\* -x generated\*
 
 install2 : all
 	$(eval lib_dir=$(if $(filter $(OS),osx), lib, lib$(MODEL)))
@@ -419,6 +423,11 @@ endif
 FORCE:
 
 endif
+
+JSON = phobos.json
+json : $(JSON)
+$(JSON) : $(ALL_D_FILES)
+	$(DMD) $(DFLAGS) -o- -Xf$@ $^
 
 ###########################################################
 # html documentation
@@ -463,12 +472,45 @@ changelog.html: changelog.dd
 #################### test for undesired white spaces ##########################
 CWS_TOCHECK = posix.mak win32.mak win64.mak osmodel.mak
 CWS_TOCHECK += $(ALL_D_FILES) index.d
-CWS_TOCHECK += $(filter-out etc/c/zlib/ChangeLog,$(ALL_C_FILES))
 
 checkwhitespace: $(LIB)
 	$(DMD) $(DFLAGS) -defaultlib= -debuglib= $(LIB) -run ../dmd/src/checkwhitespace.d $(CWS_TOCHECK)
 
 #############################
+# Submission to Phobos are required to conform to the DStyle
+# The tests below automate some, but not all parts of the DStyle guidelines.
+# See also: http://dlang.org/dstyle.html
+#############################
+
+../dscanner:
+	git clone https://github.com/Hackerpilot/Dscanner ../dscanner
+	git -C ../dscanner checkout tags/v0.4.0-alpha.8
+	git -C ../dscanner submodule update --init --recursive
+
+../dscanner/dsc: ../dscanner
+	# debug build is faster, but disable 'missing import' messages (missing core from druntime)
+	sed 's/dparse_verbose/StdLoggerDisableWarning/' -i ../dscanner/makefile
+	make -C ../dscanner githash debug
+
+style: ../dscanner/dsc
+	@echo "Check for trailing whitespace"
+	grep -nr '[[:blank:]]$$' etc std ; test $$? -eq 1
+
+	@echo "Enforce whitespace before opening parenthesis"
+	grep -nrE "(for|foreach|foreach_reverse|if|while|switch|catch)\(" $$(find . -name '*.d') ; test $$? -eq 1
+
+	@echo "Enforce whitespace between colon(:) for import statements (doesn't catch everything)"
+	grep -nr 'import [^/,=]*:.*;' $$(find . -name '*.d') | grep -vE "import ([^ ]+) :\s"; test $$? -eq 1
+
+	@echo "Check for package wide std.algorithm imports"
+	grep -nr 'import std.algorithm : ' $$(find . -name '*.d') ; test $$? -eq 1
+
+	@echo "Enforce Allman style"
+	grep -nrE '(if|for|foreach|foreach_reverse|while|unittest|switch|else|version) .*{$$' $$(find . -name '*.d'); test $$? -eq 1
+
+	# at the moment libdparse has problems to parse some modules (->excludes)
+	@echo "Running DScanner"
+	../dscanner/dsc --config .dscanner.ini --styleCheck $$(find etc std -type f -name '*.d' | grep -vE 'std/traits.d|std/typecons.d|std/conv.d') -I.
 
 .PHONY : auto-tester-build
 auto-tester-build: all checkwhitespace

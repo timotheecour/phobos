@@ -10,7 +10,7 @@
 
     Authors:    Lars Tandle Kyllingstad, Don Clugston
     Copyright:  Copyright (c) 2010, Lars T. Kyllingstad.
-    License:    $(WEB boost.org/LICENSE_1_0.txt, Boost License 1.0)
+    License:    $(HTTP boost.org/LICENSE_1_0.txt, Boost License 1.0)
     Source:     $(PHOBOSSRC std/_complex.d)
 */
 module std.complex;
@@ -53,7 +53,7 @@ auto complex(R, I)(R re, I im)  @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     auto a = complex(1.0);
     static assert (is(typeof(a) == Complex!double));
@@ -98,6 +98,7 @@ unittest
 struct Complex(T)  if (isFloatingPoint!T)
 {
     import std.format : FormatSpec;
+    import std.range.primitives : isOutputRange;
 
     /** The real part of the number. */
     T re;
@@ -108,25 +109,26 @@ struct Complex(T)  if (isFloatingPoint!T)
     /** Converts the complex number to a string representation.
 
     The second form of this function is usually not called directly;
-    instead, it is used via $(XREF string,format), as shown in the examples
+    instead, it is used via $(REF format, std,string), as shown in the examples
     below.  Supported format characters are 'e', 'f', 'g', 'a', and 's'.
 
-    See the $(LINK2 std_format.html, std.format) and $(XREF string, format)
+    See the $(MREF std, format) and $(REF format, std,string)
     documentation for more information.
     */
-    string toString() const /* TODO: @safe pure nothrow */
+    string toString() const @safe /* TODO: pure nothrow */
     {
         import std.exception : assumeUnique;
         char[] buf;
         buf.reserve(100);
         auto fmt = FormatSpec!char("%s");
         toString((const(char)[] s) { buf ~= s; }, fmt);
-        return assumeUnique(buf);
+        static trustedAssumeUnique(T)(T t) @trusted { return assumeUnique(t); }
+        return trustedAssumeUnique(buf);
     }
 
     static if (is(T == double))
     ///
-    unittest
+    @safe unittest
     {
         auto c = complex(1.2, 3.4);
 
@@ -142,15 +144,18 @@ struct Complex(T)  if (isFloatingPoint!T)
     }
 
     /// ditto
-    void toString(Char)(scope void delegate(const(Char)[]) sink,
+    void toString(Writer, Char)(scope Writer w,
                         FormatSpec!Char formatSpec) const
+        if (isOutputRange!(Writer, const(Char)[]))
     {
         import std.math : signbit;
         import std.format : formatValue;
-        formatValue(sink, re, formatSpec);
-        if (signbit(im) == 0) sink("+");
-        formatValue(sink, im, formatSpec);
-        sink("i");
+        import std.range.primitives : put;
+        formatValue(w, re, formatSpec);
+        if (signbit(im) == 0)
+           put(w, "+");
+        formatValue(w, im, formatSpec);
+        put(w, "i");
     }
 
 @safe pure nothrow @nogc:
@@ -284,7 +289,7 @@ struct Complex(T)  if (isFloatingPoint!T)
     Complex!(CommonType!(T, R)) opBinaryRight(string op, R)(R lhs) const
         if (op == "^^" && isNumeric!R)
     {
-        import std.math : log, exp, PI;
+        import std.math : cos, exp, log, sin, PI;
         Unqual!(CommonType!(T, R)) ab = void, ar = void;
 
         if (lhs >= 0)
@@ -302,7 +307,7 @@ struct Complex(T)  if (isFloatingPoint!T)
             ar = PI * this.re + log(-lhs) * this.im;
         }
 
-        return typeof(return)(ab * std.math.cos(ar), ab * std.math.sin(ar));
+        return typeof(return)(ab * cos(ar), ab * sin(ar));
     }
 
     // OP-ASSIGN OPERATORS
@@ -356,14 +361,14 @@ struct Complex(T)  if (isFloatingPoint!T)
     ref Complex opOpAssign(string op, C)(C z)
         if (op == "^^" && is(C R == Complex!R))
     {
-        import std.math : exp, log;
+        import std.math : exp, log, cos, sin;
         immutable r = abs(this);
         immutable t = arg(this);
         immutable ab = r^^z.re * exp(-t*z.im);
         immutable ar = t*z.re + log(r)*z.im;
 
-        re = ab*std.math.cos(ar);
-        im = ab*std.math.sin(ar);
+        re = ab*cos(ar);
+        im = ab*sin(ar);
         return this;
     }
 
@@ -388,10 +393,11 @@ struct Complex(T)  if (isFloatingPoint!T)
     ref Complex opOpAssign(string op, R)(R r)
         if (op == "^^" && isFloatingPoint!R)
     {
+        import std.math : cos, sin;
         immutable ab = abs(this)^^r;
         immutable ar = arg(this)*r;
-        re = ab*std.math.cos(ar);
-        im = ab*std.math.sin(ar);
+        re = ab*cos(ar);
+        im = ab*sin(ar);
         return this;
     }
 
@@ -423,7 +429,7 @@ struct Complex(T)  if (isFloatingPoint!T)
     }
 }
 
-unittest
+@safe pure nothrow unittest
 {
     import std.math;
     import std.complex;
@@ -497,6 +503,10 @@ unittest
     auto rdc = a / c1;
     assert (approxEqual(abs(rdc), a/abs(c1), EPS));
     assert (approxEqual(arg(rdc), -arg(c1), EPS));
+
+    rdc = a / c2;
+    assert (approxEqual(abs(rdc), a/abs(c2), EPS));
+    assert (approxEqual(arg(rdc), -arg(c2), EPS));
 
     auto rec1a = 1.0 ^^ c1;
     assert(rec1a.re == 1.0);
@@ -572,9 +582,30 @@ unittest
     static assert (is(typeof(c1pcr) == Complex!real));
     assert (c1pcf.re == c1pcr.re);
     assert (c1pcf.im == c1pcr.im);
+
+    auto c1c = c1;
+    auto c2c = c2;
+
+    c1c /= c1;
+    assert(approxEqual(c1c.re, 1.0, EPS));
+    assert(approxEqual(c1c.im, 0.0, EPS));
+
+    c1c = c1;
+    c1c /= c2;
+    assert(approxEqual(c1c.re, 0.588235, EPS));
+    assert(approxEqual(c1c.im, -0.352941, EPS));
+
+    c2c /= c1;
+    assert(approxEqual(c2c.re, 1.25, EPS));
+    assert(approxEqual(c2c.im, 0.75, EPS));
+
+    c2c = c2;
+    c2c /= c2;
+    assert(approxEqual(c2c.re, 1.0, EPS));
+    assert(approxEqual(c2c.im, 0.0, EPS));
 }
 
-unittest
+@safe pure nothrow unittest
 {
     // Initialization
     Complex!double a = 1;
@@ -585,7 +616,7 @@ unittest
     assert (c.re == 1.0 && c.im == 2);
 }
 
-unittest
+@safe pure nothrow unittest
 {
     // Assignments and comparisons
     Complex!double z;
@@ -632,7 +663,7 @@ template Complex(T) if (is(T R == Complex!R))
     alias Complex = T;
 }
 
-unittest
+@safe pure nothrow unittest
 {
     static assert (is(Complex!(Complex!real) == Complex!real));
 
@@ -661,8 +692,9 @@ T abs(T)(Complex!T z) @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
+    static import std.math;
     assert (abs(complex(1.0)) == 1.0);
     assert (abs(complex(0.0, 1.0)) == 1.0);
     assert (abs(complex(1.0L, -2.0L)) == std.math.sqrt(5.0L));
@@ -682,7 +714,7 @@ T sqAbs(T)(Complex!T z) @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     import std.math;
     assert (sqAbs(complex(0.0)) == 0.0);
@@ -700,7 +732,7 @@ T sqAbs(T)(T x) @safe pure nothrow @nogc
     return x*x;
 }
 
-unittest
+@safe pure nothrow unittest
 {
     import std.math;
     assert (sqAbs(0.0) == 0.0);
@@ -721,7 +753,7 @@ T arg(T)(Complex!T z) @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     import std.math;
     assert (arg(complex(1.0)) == 0.0);
@@ -740,7 +772,7 @@ Complex!T conj(T)(Complex!T z) @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     assert (conj(complex(1.0)) == complex(1.0));
     assert (conj(complex(1.0, 2.0)) == complex(1.0, -2.0));
@@ -757,12 +789,13 @@ unittest
 Complex!(CommonType!(T, U)) fromPolar(T, U)(T modulus, U argument)
     @safe pure nothrow @nogc
 {
+    import std.math : sin, cos;
     return Complex!(CommonType!(T,U))
-        (modulus*std.math.cos(argument), modulus*std.math.sin(argument));
+        (modulus*cos(argument), modulus*sin(argument));
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
     import std.math;
     auto z = fromPolar(std.math.sqrt(2.0), PI_4);
@@ -786,10 +819,11 @@ Complex!T sin(T)(Complex!T z)  @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
-  assert(sin(complex(0.0)) == 0.0);
-  assert(sin(complex(2.0L, 0)) == std.math.sin(2.0L));
+    static import std.math;
+    assert(sin(complex(0.0)) == 0.0);
+    assert(sin(complex(2.0L, 0)) == std.math.sin(2.0L));
 }
 
 
@@ -803,7 +837,8 @@ Complex!T cos(T)(Complex!T z)  @safe pure nothrow @nogc
 }
 
 ///
-unittest{
+@safe pure nothrow unittest
+{
     import std.math;
     import std.complex;
     assert(cos(complex(0.0)) == 1.0);
@@ -818,7 +853,7 @@ unittest{
 
     Note:
     $(D expi) is included here for convenience and for easy migration of code
-    that uses $(XREF math,_expi).  Unlike $(XREF math,_expi), which uses the
+    that uses $(REF _expi, std,math).  Unlike $(REF _expi, std,math), which uses the
     x87 $(I fsincos) instruction when possible, this function is no faster
     than calculating cos(y) and sin(y) separately.
 */
@@ -829,8 +864,10 @@ Complex!real expi(real y)  @trusted pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
+    static import std.math;
+
     assert(expi(1.3e5L) == complex(std.math.cos(1.3e5L), std.math.sin(1.3e5L)));
     assert(expi(0.0L) == 1.0L);
     auto z1 = expi(1.234);
@@ -845,7 +882,7 @@ unittest
 */
 Complex!T sqrt(T)(Complex!T z)  @safe pure nothrow @nogc
 {
-    import std.math : fabs;
+    static import std.math;
     typeof(return) c;
     real x,y,w,r;
 
@@ -858,8 +895,8 @@ Complex!T sqrt(T)(Complex!T z)  @safe pure nothrow @nogc
         real z_re = z.re;
         real z_im = z.im;
 
-        x = fabs(z_re);
-        y = fabs(z_im);
+        x = std.math.fabs(z_re);
+        y = std.math.fabs(z_im);
         if (x >= y)
         {
             r = y / x;
@@ -888,15 +925,32 @@ Complex!T sqrt(T)(Complex!T z)  @safe pure nothrow @nogc
 }
 
 ///
-unittest
+@safe pure nothrow unittest
 {
+    static import std.math;
     assert (sqrt(complex(0.0)) == 0.0);
     assert (sqrt(complex(1.0L, 0)) == std.math.sqrt(1.0L));
     assert (sqrt(complex(-1.0L, 0)) == complex(0, 1.0L));
 }
 
+@safe pure nothrow unittest
+{
+    import std.math : approxEqual;
+
+    auto c1 = complex(1.0, 1.0);
+    auto c2 = Complex!double(0.5, 2.0);
+
+    auto c1s = sqrt(c1);
+    assert (approxEqual(c1s.re, 1.09868411));
+    assert (approxEqual(c1s.im, 0.45508986));
+
+    auto c2s = sqrt(c2);
+    assert (approxEqual(c2s.re, 1.1317134));
+    assert (approxEqual(c2s.im, 0.8836155));
+}
+
 // Issue 10881: support %f formatting of complex numbers
-unittest
+@safe unittest
 {
     import std.format : format;
 
@@ -907,7 +961,7 @@ unittest
     assert(format("%.2f", y) == "1.20-3.40i");
 }
 
-unittest
+@safe unittest
 {
     // Test wide string formatting
     import std.format;
@@ -923,7 +977,7 @@ unittest
     assert(wformat("%.2f", x) == "1.20+3.40i"w);
 }
 
-unittest
+@safe unittest
 {
     // Test ease of use (vanilla toString() should be supported)
     assert(complex(1.2, 3.4).toString() == "1.2+3.4i");

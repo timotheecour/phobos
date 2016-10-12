@@ -46,12 +46,11 @@
  *      Not safe for multiple threads operating on the same signals
  *      or slots.
  * Macros:
- *      WIKI = Phobos/StdSignals
  *      SIGNALS=signals
  *
  * Copyright: Copyright Digital Mars 2000 - 2009.
- * License:   $(WEB www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
- * Authors:   $(WEB digitalmars.com, Walter Bright)
+ * License:   $(HTTP www.boost.org/LICENSE_1_0.txt, Boost License 1.0).
+ * Authors:   $(HTTP digitalmars.com, Walter Bright)
  * Source:    $(PHOBOSSRC std/_signals.d)
  */
 /*          Copyright Digital Mars 2000 - 2009.
@@ -80,63 +79,6 @@ extern (C) void  rt_detachDisposeEvent( Object obj, DisposeEvt evt );
  * Mixin to create a signal within a class object.
  *
  * Different signals can be added to a class by naming the mixins.
- *
- * Example:
----
-import std.signals;
-import std.stdio;
-
-class Observer
-{   // our slot
-    void watch(string msg, int i)
-    {
-        writefln("Observed msg '%s' and value %s", msg, i);
-    }
-}
-
-class Foo
-{
-    int value() { return _value; }
-
-    int value(int v)
-    {
-        if (v != _value)
-        {   _value = v;
-            // call all the connected slots with the two parameters
-            emit("setting new value", v);
-        }
-        return v;
-    }
-
-    // Mix in all the code we need to make Foo into a signal
-    mixin Signal!(string, int);
-
-  private :
-    int _value;
-}
-
-void main()
-{
-    Foo a = new Foo;
-    Observer o = new Observer;
-
-    a.value = 3;                // should not call o.watch()
-    a.connect(&o.watch);        // o.watch is the slot
-    a.value = 4;                // should call o.watch()
-    a.disconnect(&o.watch);     // o.watch is no longer a slot
-    a.value = 5;                // so should not call o.watch()
-    a.connect(&o.watch);        // connect again
-    a.value = 6;                // should call o.watch()
-    destroy(o);                 // destroying o should automatically disconnect it
-    a.value = 7;                // should not call o.watch()
-}
----
- * which should print:
- * <pre>
- * Observed msg 'setting new value' and value 4
- * Observed msg 'setting new value' and value 6
- * </pre>
- *
  */
 
 mixin template Signal(T1...)
@@ -186,8 +128,13 @@ mixin template Signal(T1...)
             }
             else
             {
-                len = len * 2 + 4;
-                auto p = core.stdc.stdlib.realloc(slots.ptr, slot_t.sizeof * len);
+                import core.checkedint : addu, mulu;
+                bool overflow;
+                len = addu(mulu(len, 2, overflow), 4, overflow); // len = len * 2 + 4
+                const nbytes = mulu(len, slot_t.sizeof, overflow);
+                if (overflow) assert(0);
+
+                auto p = core.stdc.stdlib.realloc(slots.ptr, nbytes);
                 if (!p)
                     core.exception.onOutOfMemoryError();
                 slots = (cast(slot_t*)p)[0 .. len];
@@ -206,21 +153,31 @@ mixin template Signal(T1...)
      */
     final void disconnect(slot_t slot)
     {
-        debug (signal) writefln("Signal.disconnect(slot)");
+        size_t disconnectedSlots = 0;
+        size_t instancePreviousSlots = 0;
+
         for (size_t i = 0; i < slots_idx; )
         {
-            if (slots[i] == slot)
-            {   slots_idx--;
+            if (slots[i].ptr == slot.ptr &&
+                ++instancePreviousSlots &&
+                slots[i] == slot)
+            {
+                slots_idx--;
+                disconnectedSlots++;
                 slots[i] = slots[slots_idx];
                 slots[slots_idx] = null;        // not strictly necessary
-
-                Object o = _d_toObject(slot.ptr);
-                rt_detachDisposeEvent(o, &unhook);
             }
             else
                 i++;
         }
-    }
+
+         // detach object from dispose event if all its slots have been removed
+        if (instancePreviousSlots == disconnectedSlots)
+        {
+            Object o = _d_toObject(slot.ptr);
+            rt_detachDisposeEvent(o, &unhook);
+        }
+     }
 
     /* **
      * Special function called when o is destroyed.
@@ -271,11 +228,95 @@ mixin template Signal(T1...)
     size_t slots_idx;           // used length of slots[]
 }
 
+///
+@system unittest
+{
+    import std.signals;
+
+    int observedMessageCounter = 0;
+
+    class Observer
+    {   // our slot
+        void watch(string msg, int value)
+        {
+            switch (observedMessageCounter++)
+            {
+                case 0:
+                    assert(msg == "setting new value");
+                    assert(value == 4);
+                    break;
+                case 1:
+                    assert(msg == "setting new value");
+                    assert(value == 6);
+                    break;
+                default:
+                    assert(0, "Unknown observation");
+            }
+        }
+    }
+
+    class Observer2
+    {   // our slot
+        void watch(string msg, int value)
+        {
+        }
+    }
+
+    class Foo
+    {
+        int value() { return _value; }
+
+        int value(int v)
+        {
+            if (v != _value)
+            {   _value = v;
+                // call all the connected slots with the two parameters
+                emit("setting new value", v);
+            }
+            return v;
+        }
+
+        // Mix in all the code we need to make Foo into a signal
+        mixin Signal!(string, int);
+
+      private :
+        int _value;
+    }
+
+    Foo a = new Foo;
+    Observer o = new Observer;
+    auto o2 = new Observer2;
+    auto o3 = new Observer2;
+    auto o4 = new Observer2;
+    auto o5 = new Observer2;
+
+    a.value = 3;                // should not call o.watch()
+    a.connect(&o.watch);        // o.watch is the slot
+    a.connect(&o2.watch);
+    a.connect(&o3.watch);
+    a.connect(&o4.watch);
+    a.connect(&o5.watch);
+    a.value = 4;                // should call o.watch()
+    a.disconnect(&o.watch);     // o.watch is no longer a slot
+    a.disconnect(&o3.watch);
+    a.disconnect(&o5.watch);
+    a.disconnect(&o4.watch);
+    a.disconnect(&o2.watch);
+    a.value = 5;                // so should not call o.watch()
+    a.connect(&o2.watch);
+    a.connect(&o.watch);        // connect again
+    a.value = 6;                // should call o.watch()
+    destroy(o);                 // destroying o should automatically disconnect it
+    a.value = 7;                // should not call o.watch()
+
+    assert(observedMessageCounter == 2);
+}
+
 // A function whose sole purpose is to get this module linked in
 // so the unittest will run.
 void linkin() { }
 
-unittest
+@system unittest
 {
     class Observer
     {
@@ -345,7 +386,8 @@ unittest
     a.value = 7;
 }
 
-unittest {
+@system unittest
+{
     class Observer
     {
         int    i;
@@ -523,8 +565,36 @@ unittest {
     a.value6 = 46;
 }
 
-version(none) // Disabled because of dmd @@@BUG5028@@@
+// Triggers bug from issue 15341
 unittest
+{
+    class Observer
+    {
+       void watch() { }
+       void watch2() { }
+    }
+
+    class Bar
+    {
+       mixin Signal!();
+    }
+
+   auto a = new Bar;
+   auto o = new Observer;
+
+   //Connect both observer methods for the same instance
+   a.connect(&o.watch);
+   a.connect(&o.watch2); // not connecting watch2() or disconnecting it manually fixes the issue
+
+   //Disconnect a single method of the two
+   a.disconnect(&o.watch); // NOT disconnecting watch() fixes the issue
+
+   destroy(o); // destroying o should automatically call unhook and disconnect the slot for watch2
+   a.emit(); // should not raise segfault since &o.watch2 is no longer connected
+}
+
+version(none) // Disabled because of dmd @@@BUG5028@@@
+@system unittest
 {
     class A
     {
